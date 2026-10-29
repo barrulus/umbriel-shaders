@@ -9,7 +9,7 @@ The repository is `umbriel-shaders`; the Noctalia plugin ID is
 `barrulus/umbriel-shaders`. Noctalia's source-repository layout places the plugin
 in `umbriel-shaders/`, indexed by the root `catalog.toml`.
 
-The browser shows recorded preview cards for 138 licensed effects, with visible tag chips, search, type and tag filters. Click a tag on a
+The browser shows recorded preview cards for 142 licensed effects, with visible tag chips, search, type and tag filters. Click a tag on a
 card or in a shader view to browse that tag; Clear resets all filters. Cards show
 up to two tags, with all tags available in the shader view. Select a card for a
 larger preview and choose where to apply it. **Details** contains credits, licensing,
@@ -45,7 +45,11 @@ are dependency-only and cannot be selected as standalone window effects.
 
 Requirements: Linux, Python 3.11 or newer, Noctalia plugin API 24 or newer, and
 Umbriel with named cursor presets, configuration validation, effect inspection
-and `config-replace`. The helper checks the running compositor's interface.
+and `config-replace`, using the current IPC contract (tested with `11bbdc7`).
+Configuration commands send string arrays in `args`; effect actions use typed
+JSON fields with explicit window/output targets. Apply, Undo, Restore and the
+persistent recovery helper use the same protocol. The helper checks the running
+compositor's interface.
 
 1. In Noctalia **Settings → Plugins**, add a **path** source pointing to
    `~/dev/umbriel-shaders`, then enable **Umbriel Shaders**.

@@ -252,8 +252,8 @@ def main():
                     break
                 assert time.monotonic() < deadline, "Test window did not map"
                 time.sleep(0.05)
-            peer.request("msg", "effect-border-set:heartbeat/" + target)
-            peer.request("msg", "effect-border-set:off/" + target)
+            peer.request("action", action="effect-border-set", effect="heartbeat", window=target)
+            peer.request("action", action="effect-border-set", effect="off", window=target)
             original_border = next(o["slots"]["border"] for o in peer.request("effects")["owners"] if o.get("id") == target)
             runtime_controller = h.Controller(root / "runtime-plugin", peer)
             runtime_controller.choose(str(args.source_root), "border/flowering-vine", "effects.border")
@@ -264,14 +264,33 @@ def main():
             assert next(o["slots"]["border"] for o in peer.request("effects")["owners"] if o.get("id") == target)["name"] == "flowering-vine"
             runtime_controller.restore()
             assert next(o["slots"]["border"] for o in peer.request("effects")["owners"] if o.get("id") == target) == original_border
-            peer.request("msg", "effect-cursor-set:test-cursors")
-            peer.request("msg", "effect-cursor-cycle:test-cursors")
-            peer.request("msg", "effect-cursor-set:off")
+            peer.request("action", action="effect-cursor-set", effect="test-cursors")
+            peer.request("action", action="effect-cursor-cycle", pool="test-cursors")
+            peer.request("action", action="effect-cursor-set", effect="off")
             original_cursor = peer.request("effects")["cursor"]
             runtime_controller.choose(str(args.source_root), "cursor/glow", "effects.cursor")
             runtime_controller.restore()
             assert peer.request("effects")["cursor"] == original_cursor
-            peer.request("msg", "effect-cursor-reset")
+            peer.request("action", action="effect-cursor-reset")
+            for kind, target_field, target_value, before_id, chosen_id in (
+                ("window", "window", target, "window/crt", "window/parchment"),
+                ("screen", "output", "HEADLESS-1", "screen/vignette", "screen/midnight-fog"),
+            ):
+                catalogue_effects = local_catalogue.effects
+                fields = {target_field: target_value}
+                peer.request("action", action=f"effect-{kind}-set", effect=catalogue_effects[before_id]["preset"], **fields)
+                peer.request("action", action=f"effect-{kind}-set", effect="off", **fields)
+                def current_slot():
+                    return next(record["value"] for record in h.runtime_slots(peer.request("effects")).values()
+                                if record["kind"] == kind and record["target"] == target_value)
+                previous = current_slot()
+                runtime_controller.choose(str(args.source_root), chosen_id, f"effects.{kind}")
+                assert current_slot()["name"] == catalogue_effects[chosen_id]["preset"]
+                assert not current_slot()["suppressed"]
+                runtime_controller.undo()
+                assert current_slot() == previous
+                peer.request("action", action=f"effect-{kind}-reset", **fields)
+            results.append("typed window/output actions replace runtime overrides and Undo restores selection and suppression")
             results.append("one-step Apply replaces a real window runtime override; Undo/Restore recover its previous border and suppression, plus cursor pool/member state")
         finally:
             window.terminate()

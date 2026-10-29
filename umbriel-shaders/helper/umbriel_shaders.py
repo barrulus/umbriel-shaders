@@ -129,7 +129,7 @@ class Peer:
         self.cwd = str((proc / "cwd").resolve())
         self.environ = dict(item.split("=", 1) for item in (proc / "environ").read_bytes().decode().split("\0") if "=" in item)
 
-    def request(self, command, argument=None):
+    def request(self, command, *arguments, **fields):
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
             connection.settimeout(5)
             connection.connect(str(self.path))
@@ -138,9 +138,9 @@ class Peer:
             identity = peer_identity(pid, self.path)
             require(self.identity is None or identity == self.identity, "Umbriel restarted or the session changed; review again.")
             self.identity = identity
-            payload = {"cmd": command}
-            if argument is not None:
-                payload["arg"] = argument
+            payload = {"cmd": command, **fields}
+            if arguments:
+                payload["args"] = list(arguments)
             connection.sendall((json.dumps(payload) + "\n").encode())
             response = b""
             while b"\n" not in response:
@@ -756,11 +756,18 @@ class Controller:
         target, kind = record["target"], record["kind"]
         require(kind in {"border", "window", "screen", "cursor"}, "Invalid effect kind in recovery state.")
         require(kind == "cursor" or bool(target), "An explicit effect target is required.")
-        argument = selector or ""
-        if target:
-            argument = argument + "/" + target if operation in {"set", "cycle"} else target
-        command = f"effect-{kind}-{operation}" + (":" + argument if argument else "")
-        self.peer.request("msg", command)
+        require(operation in {"set", "cycle", "reset", "toggle"}, "Invalid effect operation in recovery state.")
+        fields = {"action": f"effect-{kind}-{operation}"}
+        if operation == "set":
+            require(bool(selector), "An effect selector is required.")
+            fields["effect"] = selector
+        elif operation == "cycle" and selector:
+            fields["pool"] = selector
+        if kind in {"border", "window"}:
+            fields["window"] = target
+        elif kind == "screen":
+            fields["output"] = target
+        self.peer.request("action", **fields)
 
     def restore_runtime(self, records):
         for key, desired in records.items():

@@ -1,5 +1,27 @@
 # Local catalogue validation
 
+## Current Umbriel IPC (0.3.4)
+
+Updated for installed and running Umbriel `0.1.0 (11bbdc7)`. Configuration
+replacement uses `args: [path]`; effect commands use `cmd: action` with typed
+`action`, `effect`/`pool`, and explicit `window`/`output` fields. Empty optional
+fields are omitted. The main helper and its persistent recovery copy use the
+same contract; no legacy action strings or singular `arg` payloads remain.
+
+All 90 helper tests pass. Wire-level regression checks cover paths with spaces,
+fragmented replies, server errors, all four effect kinds and operations, optional
+pool omission and refusal to target an unspecified window/output. Plugin lint
+reports zero errors and warnings.
+
+Private native integration with `11bbdc7` passes every catalogue use, all ten
+families, apply/undo/restore, GPU-failure rollback and interrupted-operation
+recovery. Customised presets remain untouched. Additional mapped-window and
+headless-output checks verify typed window/screen actions and exact restoration
+of previous runtime selections and suppression; cursor pool/member restoration
+also passes. Integration artifacts: `/tmp/us-test-uo_846gw`; output:
+`/tmp/umbriel-shaders-ipc-integration.log`.
+
+
 ## Metadata-only families (2026-10-29)
 
 Family definitions now live in root `families.toml`. Removed family directories,

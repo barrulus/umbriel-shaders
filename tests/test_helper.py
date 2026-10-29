@@ -79,16 +79,17 @@ class FakePeer:
                 "owners": [{**owner, "slots": {kind: normalized(value, defaults.get(kind, "")) for kind, value in owner["slots"].items()}}
                            for owner in self.owners]}
 
-    def request(self, command, argument=None):
+    def request(self, command, *arguments, **fields):
         if command == "effects":
             return self.report()
-        if command == "msg":
-            self.messages.append(argument)
-            if self.fail_action and self.fail_action(argument):
+        if command == "action":
+            assert not arguments
+            self.messages.append(fields)
+            if self.fail_action and self.fail_action(fields):
                 raise h.Error("Injected runtime failure")
-            action, _, arg = argument.partition(":")
-            kind, operation = action.removeprefix("effect-").rsplit("-", 1)
-            selector, target = (arg.split("/", 1) + [""])[:2] if operation in {"set", "cycle"} else (None, arg)
+            kind, operation = fields["action"].removeprefix("effect-").rsplit("-", 1)
+            selector = fields.get("effect", fields.get("pool"))
+            target = fields.get("window", fields.get("output", ""))
             report = self.report()
             if kind == "cursor":
                 value = report["cursor"].copy()
@@ -115,6 +116,7 @@ class FakePeer:
             store(value)
             return None
         if command == "config-replace":
+            argument, = arguments
             if self.reject:
                 self.reject = False
                 raise h.Error("Rejected replacement")
@@ -125,6 +127,71 @@ class FakePeer:
                 self.on_switch(argument)
             return None
         raise AssertionError(command)
+
+
+class PeerTests(unittest.TestCase):
+    def setUp(self):
+        self.peer = h.Peer.__new__(h.Peer)
+        self.peer.path = Path("/test/umbriel.sock")
+        self.peer.identity = None
+        self.identity = {"pid": 42, "socket": str(self.peer.path), "start": "test", "boot": "test"}
+        socket_patch = patch.object(h.socket, "socket")
+        self.socket = socket_patch.start().return_value.__enter__.return_value
+        self.addCleanup(socket_patch.stop)
+        self.socket.getsockopt.return_value = h.struct.pack("3i", 42, os.getuid(), os.getgid())
+        self.socket.recv.return_value = b'{"ok":null}\n'
+        identity_patch = patch.object(h, "peer_identity", return_value=self.identity)
+        identity_patch.start()
+        self.addCleanup(identity_patch.stop)
+
+    def sent(self):
+        return json.loads(self.socket.sendall.call_args.args[0])
+
+    def test_config_replace_uses_argument_array_preserving_path(self):
+        path = '/tmp/config with spaces/quote"-and-colon:shader.toml'
+        self.peer.request("config-replace", path)
+        self.assertEqual(self.sent(), {"cmd": "config-replace", "args": [path]})
+
+    def test_query_still_has_no_arguments_and_handles_fragmented_reply(self):
+        self.socket.recv.side_effect = [b'{"ok":{"pre', b'sets":[]}}\n']
+        self.assertEqual(self.peer.request("effects"), {"presets": []})
+        self.assertEqual(self.sent(), {"cmd": "effects"})
+
+    def test_effect_actions_use_typed_fields_for_each_owner_and_operation(self):
+        controller = h.Controller.__new__(h.Controller)
+        controller.peer = self.peer
+        for kind in ("cursor", "border", "window", "screen"):
+            target = "" if kind == "cursor" else "target/with:delimiters and spaces"
+            for operation in ("set", "cycle", "reset", "toggle"):
+                selector = "custom/preset:or pool" if operation in ("set", "cycle") else None
+                expected = {"cmd": "action", "action": f"effect-{kind}-{operation}"}
+                if selector:
+                    expected["effect" if operation == "set" else "pool"] = selector
+                if kind != "cursor":
+                    expected["output" if kind == "screen" else "window"] = target
+                with self.subTest(kind=kind, operation=operation):
+                    controller.effect_action({"kind": kind, "target": target}, operation, selector)
+                    self.assertEqual(self.sent(), expected)
+
+    def test_optional_pool_and_cursor_target_are_omitted(self):
+        controller = h.Controller.__new__(h.Controller)
+        controller.peer = self.peer
+        controller.effect_action({"kind": "cursor", "target": ""}, "cycle")
+        self.assertEqual(self.sent(), {"cmd": "action", "action": "effect-cursor-cycle"})
+
+    def test_targeted_actions_never_fall_back_to_focus(self):
+        controller = h.Controller.__new__(h.Controller)
+        controller.peer = self.peer
+        for kind in ("border", "window", "screen"):
+            with self.subTest(kind=kind), self.assertRaisesRegex(h.Error, "explicit effect target"):
+                controller.effect_action({"kind": kind, "target": ""}, "set", "glow")
+        self.socket.sendall.assert_not_called()
+
+    def test_server_error_is_reported_without_retry(self):
+        self.socket.recv.return_value = b'{"err":"window: unknown window"}\n'
+        with self.assertRaisesRegex(h.Error, "window: unknown window"):
+            self.peer.request("action", action="effect-border-reset", window="closed-window")
+        self.socket.sendall.assert_called_once()
 
 
 class ControllerTests(unittest.TestCase):
@@ -801,7 +868,7 @@ class ControllerTests(unittest.TestCase):
         self.peer.runtime = True
         self.peer.owners = [{"type": "window", "id": "window-1", "slots": {"border": {"name": "", "source": "default", "suppressed": True}}}]
         cursor = self.peer.report()["cursor"].copy()
-        self.peer.fail_action = lambda command: command.startswith("effect-border-set:test-border")
+        self.peer.fail_action = lambda fields: fields == {"action": "effect-border-set", "effect": "test-border", "window": "window-1"}
         with self.assertRaisesRegex(h.Error, "previous configuration was restored"):
             self.controller.choose_family(str(self.source), "test", {"effects.cursor": "cursor/glow", "effects.border": "border/test-border"})
         self.assertEqual(self.peer.report()["cursor"], cursor)
@@ -1007,7 +1074,7 @@ class ControllerTests(unittest.TestCase):
         self.add_effect("border/test-border")
         self.peer.owners = [{"type": "window", "id": name, "slots": {"border": {"name": "old-border", "source": "runtime"}}} for name in ("one", "two")]
         original = h.runtime_slots(self.peer.report())
-        self.peer.fail_action = lambda action: action == "effect-border-set:test-border/two"
+        self.peer.fail_action = lambda fields: fields == {"action": "effect-border-set", "effect": "test-border", "window": "two"}
         with self.assertRaisesRegex(h.Error, "previous configuration was restored"):
             self.controller.choose(str(self.source), "border/test-border", "effects.border")
         self.assertEqual(h.runtime_slots(self.peer.report()), original)
