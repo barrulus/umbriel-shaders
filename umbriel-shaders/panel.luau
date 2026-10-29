@@ -420,6 +420,13 @@ render = function()
     ui.button({ key = "settings", glyph = "settings", tooltip = "Settings", onClick = "settings", variant = "ghost" }),
     ui.button({ key = "close", glyph = "x", tooltip = "Close", onClick = "close", variant = "ghost" }),
   }) }
+  local online = noctalia.getConfig("source_mode") ~= "local"
+  local sourceLabel = online and "Online · Noctalia community" or "Local development"
+  if online and catalogue.offline then sourceLabel = "Offline · Saved community catalogue" end
+  table.insert(root, ui.row({ key = "catalogue-source", gap = 8, align = "center" }, {
+    ui.label({ text = sourceLabel, fontSize = 12, color = "on_surface/0.7", flexGrow = 1 }),
+    ui.button({ text = "Change source", variant = "ghost", onClick = "pluginSettings", enabled = ready }),
+  }))
   local content
   if browsing and family then content = familyContent(family)
   elseif browsing then

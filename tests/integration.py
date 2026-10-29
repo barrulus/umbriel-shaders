@@ -26,7 +26,8 @@ spec.loader.exec_module(h)
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source-root", required=True, type=Path)
+    parser.add_argument("--source-root", type=Path)
+    parser.add_argument("--online", action="store_true", help="test public downloads with no shader checkout")
     parser.add_argument("--umbriel", default=shutil.which("umbriel"))
     parser.add_argument("--keep", action="store_true", help="retain temporary logs and configs for inspection")
     parser.add_argument("--host-smoke", action="store_true", help="also load the plugin in a private Noctalia and open its panel")
@@ -34,7 +35,10 @@ def main():
     parser.add_argument("--host-only", action="store_true", help="run just the panel/lifecycle checks")
     parser.add_argument("--size", choices=("1280x1024", "640x480"), default="1280x1024")
     args = parser.parse_args()
-    args.source_root = args.source_root.resolve()
+    if not args.online and args.source_root is None:
+        parser.error("provide --source-root or --online")
+    if args.source_root is not None:
+        args.source_root = args.source_root.resolve()
     root = Path(tempfile.mkdtemp(prefix="us-test-", dir="/tmp"))
     process = None
     log = None
@@ -76,6 +80,61 @@ def main():
             raise RuntimeError("Headless compositor startup timed out.")
 
         process, peer = start()
+        if args.online:
+            from catalogue_client import ONLINE_REPOSITORY
+            import online_catalogue
+            controller = h.Controller(root / "plugin", peer, str(base))
+            assert not (controller.root / "library").exists()
+            registry = controller.catalogue(ONLINE_REPOSITORY)["catalogue"]
+            assert registry["mode"] == "online" and len(registry["effects"]) >= 136
+            assert all(e["local_preview"]["image"] for e in registry["effects"])
+            assert not (controller.root / "library").exists()
+            results = ["public catalogue and previews browse from empty storage without a shader checkout"]
+            controller.choose(ONLINE_REPOSITORY, "cursor/glow", "effects.cursor")
+            assert controller.status()["managed"]
+            assert not (controller.root / "library/animation").exists()
+            controller.undo(); assert not controller.status()["managed"]
+            results.append("Glow downloads selectively, applies, compiles and undoes")
+            controller.choose(ONLINE_REPOSITORY, "animation/workspace-iris", "animation.workspaces")
+            assert controller.state()["current"]["settings"]["animation.workspaces.style"] == "reveal"
+            peer.request("action", action="workspace-next")
+            controller.restore(); assert not controller.status()["managed"]
+            results.append("workspace reveal downloads, applies in one choose operation and restores")
+            controller.choose_family(ONLINE_REPOSITORY, "flowering-vine", {
+                "effects.border": "border/flowering-vine"})
+            assert (controller.root / "library/window/flowering-vine-overlay/shader.glsl").is_file()
+            controller.undo(); assert not controller.status()["managed"]
+            results.append("family downloads its overlay dependency and one Undo restores the original")
+            controller.choose(ONLINE_REPOSITORY, "cursor/glow", "effects.cursor")
+            controller.restore()
+            process.terminate(); process.wait(timeout=10)
+            process, peer = start()
+            controller = h.Controller(root / "plugin", peer, str(base))
+            assert not controller.status()["managed"]
+            with patch.object(online_catalogue, "download", side_effect=ConnectionError("offline test")):
+                assert controller.catalogue(ONLINE_REPOSITORY)["catalogue"]["offline"]
+                controller.choose(ONLINE_REPOSITORY, "cursor/glow", "effects.cursor")
+                controller.restore()
+            results.append("restart preserves downloads; offline browsing and reapply/restore work")
+            failed = h.Controller(root / "failed-download", peer, str(base))
+            real_download = online_catalogue.download
+            def corrupt(url, limit):
+                raw = real_download(url, limit)
+                return raw + b"corrupted" if url.endswith("/cursor/glow/shader.glsl") else raw
+            with patch.object(online_catalogue, "download", side_effect=corrupt):
+                try:
+                    failed.choose(ONLINE_REPOSITORY, "cursor/glow", "effects.cursor")
+                except ValueError as error:
+                    assert "hash mismatch" in str(error)
+                else:
+                    raise AssertionError("Corrupt download was accepted")
+            assert not failed.status()["managed"] and not (failed.root / "library").exists()
+            results.append("bad download hashes leave the original active with no partial shader install")
+            assert base.read_bytes() == original
+            if args.host_smoke:
+                results.extend(host_smoke(root, env, base, peer, ONLINE_REPOSITORY, size=args.size))
+            print(json.dumps({"passed": results, "directory": str(root), "retained": args.keep}, indent=2))
+            return 0
         if args.host_only:
             results = host_smoke(root, env, base, peer, args.source_root, args.pointer_client, args.size)
             print(json.dumps({"passed": results, "directory": str(root), "retained": args.keep}, indent=2))
@@ -345,13 +404,15 @@ def host_smoke(root, compositor_env, base, peer, source, pointer_client=None, si
     key_file = root / "test-storage-key"
     key_file.write_text(os.urandom(32).hex() + "\n")
     key_file.chmod(0o600)
+    online = str(source).startswith("https://")
     (config_dir / "config.toml").write_text(
         '[storage]\nkey_source = "file"\nkey_file = ' + json.dumps(str(key_file)) + '\n'
         '[shell]\noffline_mode = true\ntelemetry_enabled = false\nsetup_wizard_enabled = false\n'
         'clipboard_enabled = false\n[plugins]\nenabled = ["barrulus/umbriel-shaders"]\nauto_update = "none"\n'
         '[[plugins.source]]\nname = "prototype"\nkind = "path"\nenabled = true\nlocation = '
-        + json.dumps(str(ROOT)) + '\n[plugin_settings."barrulus/umbriel-shaders"]\nsource_root = '
-        + json.dumps(str(source)) + '\nbase_config = ' + json.dumps(str(base)) + '\n')
+        + json.dumps(str(ROOT)) + '\n[plugin_settings."barrulus/umbriel-shaders"]\nsource_mode = '
+        + json.dumps("online" if online else "local") + '\nsource_root = '
+        + json.dumps("" if online else str(source)) + '\nbase_config = ' + json.dumps(str(base)) + '\n')
     log_path = root / "noctalia.log"
     data = root / "state/noctalia/plugins/data/barrulus/umbriel-shaders"
     with log_path.open("w") as log:
@@ -373,6 +434,26 @@ def host_smoke(root, compositor_env, base, peer, source, pointer_client=None, si
             msg("panel-toggle", "barrulus/umbriel-shaders:shaders")
             time.sleep(0.5)
             msg("plugin", "barrulus/umbriel-shaders:manager", "all", "refresh")
+            deadline = time.monotonic() + 60
+            while True:
+                ready = not online
+                if online:
+                    indexes = list((data / "catalogue-cache").rglob("catalogue.json"))
+                    if indexes:
+                        registry = h.load_json(indexes[0])
+                        previews = [e["preview"]["image"] for e in registry["effects"] if e["preview"]["image"]]
+                        ready = all((indexes[0].parent / "objects" / (registry["files"][p]["sha256"] + Path(p).suffix)).exists() for p in previews)
+                if ready:
+                    with (data / "operation.lock").open("a") as lock:
+                        try:
+                            h.fcntl.flock(lock, h.fcntl.LOCK_EX | h.fcntl.LOCK_NB)
+                        except BlockingIOError:
+                            pass
+                        else:
+                            h.fcntl.flock(lock, h.fcntl.LOCK_UN)
+                            break
+                assert time.monotonic() < deadline, "Catalogue did not load in the plugin host"
+                time.sleep(0.1)
             time.sleep(0.5)
             assert not (data / "library").exists(), "Opening the plugin unexpectedly installed shaders"
             subprocess.run(["grim", "-o", "HEADLESS-1", str(root / "panel.png")], env=env, check=True, timeout=10)

@@ -1,17 +1,26 @@
 id = "barrulus/umbriel-shaders"
 name = "Umbriel Shaders"
-version = "0.3.4"
+version = "0.4.0"
 plugin_api = 24
 author = "Barrulus"
 license = "MIT"
 icon = "sparkles"
-description = "Browse the local shader catalogue, review selections, apply and restore."
+description = "Browse community shaders online, download, apply and restore."
 tags = ["umbriel", "shaders"]
 dependencies = ["python3", "umbriel"]
 
 [[setting]]
+key = "source_mode"
+type = "select"
+label_key = "settings.source_mode.label"
+description_key = "settings.source_mode.description"
+default = "online"
+options = [{ value = "online", label_key = "settings.source_mode.online" }, { value = "local", label_key = "settings.source_mode.local" }]
+
+[[setting]]
 key = "source_root"
 type = "folder"
+visible_when = { key = "source_mode", values = ["local"] }
 label_key = "settings.source_root.label"
 description_key = "settings.source_root.description"
 default = ""

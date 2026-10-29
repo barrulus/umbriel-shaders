@@ -132,3 +132,15 @@ def equivalent(existing, imported, graph_files, imported_hash):
             return False
     shader = graph_files.get(existing["shader"])
     return left == right and shader is not None and shader["sha256"] == imported_hash
+
+
+ONLINE_REPOSITORY = "https://github.com/noctalia-dev/community-umbriel-shaders"
+
+
+def open_catalogue(source, cache, *, refresh=False):
+    source = str(source) if source is not None else source
+    if source == ONLINE_REPOSITORY:
+        from online_catalogue import OnlineCatalogue
+        return OnlineCatalogue(source, cache, refresh=refresh)
+    contract.require(not source or "://" not in source, "Unsupported catalogue source.")
+    return LocalCatalogue(source)

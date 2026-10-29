@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 Barrulus
-"""Local catalogue Apply/Undo client. No networking or automatic startup apply.
+"""Catalogue Apply/Undo client. Networking is limited to explicit online catalogue operations.
 
 Python 3.11+, Linux, and Umbriel. JSON stdout is the service interface.
 The original configuration is never written. Every switch has a durable journal.
@@ -450,7 +450,7 @@ def diagnostic_report(directory, peer=None, *, base=None, source=None, live_erro
 
     generated = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
     overview = ["Umbriel Shaders diagnostic report", "Captured: " + generated, ownership,
-                "Plugin data: " + str(root), "Catalogue checkout: " + text(source or "Not supplied"),
+                "Plugin data: " + str(root), "Catalogue source: " + text(source or "Not supplied"),
                 "Umbriel executable: " + text(getattr(peer, "executable", "Unavailable")),
                 "", "Automatic cross-session restore: not implemented.",
                 "Recovery journal: " + ("present" if pending_exists else "none"),
@@ -577,22 +577,29 @@ class Controller:
                                if state["current"] else {})}
 
     def catalogue(self, source):
-        from catalogue_client import LocalCatalogue
+        from catalogue_client import open_catalogue
         try:
-            return {**self.status(), **LocalCatalogue(source).browse()}
+            return {**self.status(), **open_catalogue(source, self.root / "catalogue-cache", refresh=True).browse()}
         except ValueError as error:
             raise Error(str(error)) from error
 
     def install_selection(self, catalogue, selected):
         manifest_path = self.root / "library.json"
         installed = load_json(manifest_path) if manifest_path.exists() else {}
-        for name, expected in installed.items():
+        online = getattr(catalogue, "online", False)
+        for name, expected in ([] if online else installed.items()):
             require(digest(read(self.root / "library" / name)) == expected,
                     "Installed shader files were customised; they will not be overwritten.")
             require(name in catalogue.registry["files"] and catalogue.registry["files"][name]["sha256"] == expected,
                     "The local catalogue changes installed shader versions. Library updates are not implemented yet.")
+        # Fetch and verify every missing file before writing any of them.
+        downloads = {name: catalogue.bytes(name) for name in selected
+                     if not (online and name in installed)}
         for name in selected:
-            raw = catalogue.bytes(name)
+            if online and name in installed:
+                require((self.root / "library" / name).is_file(), "An installed notice is missing: " + name)
+                continue  # Keep existing shared notices without rewriting old generations.
+            raw = downloads[name]
             destination = self.root / "library" / name
             require(not destination.exists() or read(destination) == raw, "Unrecorded local shader files need review.")
             if name not in installed:
@@ -601,8 +608,8 @@ class Controller:
         save_json(manifest_path, installed)
         return {str(self.root / "library" / name): fingerprint(self.root / "library" / name) for name in selected}
 
-    def prepare(self, source, effect_id="cursor/glow", slot="effects.cursor", *, family_id=None, choices=None):
-        from catalogue_client import LocalCatalogue, equivalent, setting_lines, preset_lines
+    def prepare(self, source, effect_id="cursor/glow", slot="effects.cursor", *, family_id=None, choices=None, compare_local=True):
+        from catalogue_client import open_catalogue, equivalent, setting_lines, preset_lines
         require(not self.pending_path.exists(), "Recover the interrupted operation first.")
         keys = self.peer.capabilities()
         disk_state = self.state()
@@ -630,7 +637,7 @@ class Controller:
         requested = {slot: effect_id}
         family = None
         try:
-            catalogue = LocalCatalogue(source)
+            catalogue = open_catalogue(source, self.root / "catalogue-cache")
             if family_id is not None:
                 family, requested, selections, selected = catalogue.family_selection(
                     family_id, choices, selections, {"preset-effects": "supported"})
@@ -649,6 +656,9 @@ class Controller:
                     f"Required base setting {key} = {expected!r} must be resolved before applying.")
         definitions, local_copies, resolved, checked_presets = {}, {}, set(), set()
         imported_ids = set()
+        reused_files = {}
+        online = getattr(catalogue, "online", False)
+        library_manifest = load_json(self.root / "library.json") if online and (self.root / "library.json").exists() else {}
 
         def use_local(name, kind):
             existing = graph["presets"].get(name)
@@ -671,13 +681,48 @@ class Controller:
             name = effect["preset"]
             require(not name.startswith(MARKER), "Catalogue presets cannot use the plugin ownership marker prefix.")
             require(name not in graph["pools"], f"The base {base} defines a pool named {name}, not an individual shader preset.")
-            definition = catalogue.definition(selected_id, self.root / "library")
             if name in graph["presets"]:
                 existing = use_local(name, effect["kind"])
-                relative_shader = Path(definition["shader"]).relative_to(self.root / "library").as_posix()
-                local_copies[name]["matches_catalogue"] = equivalent(
-                    existing, definition, graph["files"], catalogue.registry["files"][relative_shader]["sha256"])
+                # Comparing is optional: offline access must not block a local copy.
+                try:
+                    if online and not compare_local:
+                        return
+                    definition = catalogue.definition(selected_id, self.root / "library")
+                    relative_shader = Path(definition["shader"]).relative_to(self.root / "library").as_posix()
+                    local_copies[name]["matches_catalogue"] = equivalent(
+                        existing, definition, graph["files"], catalogue.registry["files"][relative_shader]["sha256"])
+                except (ValueError, OSError):
+                    if not online: raise
                 return
+            preset_path = effect["path"] + "/effect.toml"
+            if online and preset_path in library_manifest:
+                # The installed preset is now the user's local copy. Read its own
+                # dependencies and colours; never replace it with a newer download.
+                local = config_graph(self.root / "library" / preset_path, self.peer.environ)
+                visiting = set()
+                def reuse(preset, kind):
+                    if preset in graph["presets"]:
+                        use_local(preset, kind)
+                        return
+                    require(preset not in visiting, "Cyclic installed overlay reference.")
+                    entry = local["presets"].get(preset)
+                    require(entry is not None and entry["definition"].get("kind") == kind,
+                            "Installed preset has the wrong kind or is missing: " + preset)
+                    require(preset not in graph["pools"], "Installed preset conflicts with a local pool: " + preset)
+                    visiting.add(preset)
+                    definition = {**entry["definition"], "shader": entry["shader"]}
+                    if kind == "border" and definition.get("overlay"):
+                        reuse(definition["overlay"], "window")
+                    visiting.remove(preset)
+                    require(preset not in definitions or definitions[preset] == definition,
+                            "Conflicting installed preset: " + preset)
+                    definitions[preset] = definition
+                    checked_presets.add(preset)
+                    local_copies.setdefault(preset, {"preset": preset, "config": entry["config"], "matches_catalogue": None})
+                reuse(name, effect["kind"])
+                reused_files.update(local["files"])
+                return
+            definition = catalogue.definition(selected_id, self.root / "library")
             for dependency in effect["dependencies"]:
                 resolve(dependency)
             imported_ids.add(selected_id)
@@ -705,7 +750,7 @@ class Controller:
         self.peer.validate(config)
         self.phase("Configuration validation", "passed")
         verify(graph["files"])
-        own_files = {**installed, str(config): fingerprint(config), str(shader): fingerprint(shader)}
+        own_files = {**reused_files, **installed, str(config): fingerprint(config), str(shader): fingerprint(shader)}
         current = {"token": token, "marker": marker, "config": str(config), "files": own_files,
                    "selections": selections, "settings": settings,
                    "presets": sorted(checked_presets),
@@ -891,7 +936,7 @@ class Controller:
         self.phase("Rollback / recovery", "passed")
 
     def choose_family(self, source, family_id, choices):
-        plan = self.prepare(source, family_id=family_id, choices=choices)
+        plan = self.prepare(source, family_id=family_id, choices=choices, compare_local=False)
         result = self.apply(plan["plan_token"])
         result["message"] = "Family applied. Undo restores the whole previous selection."
         if plan["local_copies"]:
@@ -899,7 +944,7 @@ class Controller:
         return result
 
     def choose(self, source, effect_id, slot):
-        plan = self.prepare(source, effect_id, slot)
+        plan = self.prepare(source, effect_id, slot, compare_local=False)
         result = self.apply(plan["plan_token"])
         if plan["local_copies"]:
             result["message"] += " Using your existing local copy."
@@ -970,7 +1015,7 @@ def main(argv=None):
     parser.add_argument("--state-dir", required=True, type=Path)
     parser.add_argument("--socket", help="explicit Umbriel socket; defaults to this session's environment")
     parser.add_argument("--base-config", help="explicit base path, including custom/declarative configurations")
-    parser.add_argument("--source-root", help="community shader checkout, used only by prepare")
+    parser.add_argument("--source-root", help="online repository URL or explicit local development checkout")
     parser.add_argument("--plan-token")
     parser.add_argument("--family")
     parser.add_argument("--choices", help="JSON mapping of family uses to selected member IDs; empty values keep current")

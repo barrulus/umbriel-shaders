@@ -1,28 +1,36 @@
 # Umbriel Shaders
 
-A Noctalia plugin for browsing and applying the local Umbriel shader catalogue.
+A Noctalia plugin for browsing, downloading and applying community Umbriel shaders.
 Choose an effect and a supported use, then Apply. Validation and installation
-of missing local-checkout files happen automatically; Review remains optional. Undo, Restore original, and interrupted-operation recovery retain
+of missing shader files happen automatically; Review remains optional. Undo, Restore original, and interrupted-operation recovery retain
 the same transactional flow as the original Glow prototype.
 
 The repository is `umbriel-shaders`; the Noctalia plugin ID is
 `barrulus/umbriel-shaders`. Noctalia's source-repository layout places the plugin
 in `umbriel-shaders/`, indexed by the root `catalog.toml`.
 
-The browser shows recorded preview cards for 142 licensed effects, with visible tag chips, search, type and tag filters. Click a tag on a
-card or in a shader view to browse that tag; Clear resets all filters. Cards show
-up to two tags, with all tags available in the shader view. Select a card for a
-larger preview and choose where to apply it. **Details** contains credits, licensing,
-collection membership, configuration changes and the local-copy comparison.
-Available recordings open in the system viewer through **Open recording externally**
-in Details; embedded animated previews are not implemented yet. It reads a configured
-local checkout; the public catalogue API has not been published. Downloads,
-library updates and per-window/output rules
-remain future work. Shader authoring metadata stays in `community-umbriel-shaders`;
-this repository owns the consumer and local management.
+The browser opens **Online · Noctalia community** by default. It reads the
+[published upstream catalogue](https://raw.githubusercontent.com/noctalia-dev/community-umbriel-shaders/catalogue/catalogue.json)
+and shows preview cards, tags, search, type filters and family views. No community
+shader checkout is required. **Change source** opens plugin settings, where
+**Catalogue source** switches between **Online — Noctalia community** and
+**Local development checkout**. Existing checkout paths are kept for development
+but are not read in Online mode.
 
-The **Families** view derives ten coordinated collections from root
-`families.toml` in the shader repository and composes existing member previews.
+Browsing fetches the JSON and static previews. **Apply** downloads only missing
+selected shaders, dependencies and notices, verifies their sizes and SHA-256,
+and applies the selection. URLs use the exact source commit recorded in the
+catalogue. Refresh checks for a newer catalogue. On a network failure, a saved
+catalogue and previews remain browsable; installed shaders can be reapplied
+offline. New shaders require a successful download.
+
+Tags are visible on cards and shader views. **Details** contains credits,
+licensing, configuration changes and the optional local-copy comparison.
+Recordings still open through **Open recording externally**; embedded animation
+playback is separate work. Per-window/output rule editing also remains separate.
+
+The **Families** view reads coordinated collections from catalogue metadata and
+composes existing member previews. Authors define families in root `families.toml`.
 Families have no folders, copied assets or separate configuration files. Open a family to see members grouped by supported use;
 selecting one opens its individual preview and Apply controls. **Apply family**
 stays below the scrolling members and applies the chosen uses together. Single
@@ -37,8 +45,7 @@ Search/type/tag filters work in both galleries.
 The shader gallery initially renders 24 cards, with Show more for the next batch;
 filters and search always consider all records.
 
-The unlicensed `animation/example` is excluded. The two optional audio shader
-variants in Accent Pulse and Pulse remain manual alternatives. Three overlays
+The unlicensed `animation/example` is excluded. Audio variants available only in a development checkout remain manual alternatives. Three overlays
 are dependency-only and cannot be selected as standalone window effects.
 
 ## Run locally
@@ -53,8 +60,8 @@ compositor's interface.
 
 1. In Noctalia **Settings → Plugins**, add a **path** source pointing to
    `~/dev/umbriel-shaders`, then enable **Umbriel Shaders**.
-2. Open the plugin's settings and set **Community shader checkout** to the local
-   `community-umbriel-shaders` directory.
+2. Leave **Catalogue source** set to **Online — Noctalia community**. For shader
+   authoring, choose **Local development checkout** and set its folder instead.
 3. Set **Original Umbriel configuration** if startup discovery is insufficient.
    Custom `-c` paths and read-only/declarative configurations are supported.
 4. Open the panel:
@@ -75,8 +82,8 @@ The action bar keeps the destination, Apply, Undo, Restore and Details below a
 bounded scrolling area. Settings, Refresh and Close are in the header. Details
 shows settings that actually change; identical before/after values are omitted.
 
-Browsing reads and validates local catalogue metadata without installing shader
-content or changing the compositor. Review uses existing local presets as-is.
+Browsing validates the catalogue without installing shader content or changing
+the compositor. Review uses existing local presets as-is.
 Only missing presets, their required dependencies and notices are imported;
 then a candidate wrapper is validated. Apply
 rechecks the reviewed inputs before switching and verifies GPU compilation.
@@ -111,9 +118,9 @@ unused catalogue dependencies are not imported. The local preset must have the
 kind required by the selected use and pass the compositor's normal validation.
 
 **Compare with catalogue** optionally reports whether local settings and shader
-bytes match the configured catalogue checkout. Differences are informational and
-never block reuse. This is not an online-version check; the remote catalogue API
-is still unpublished. The base path stays visible after errors.
+bytes match the selected catalogue. Online comparison may download the selected
+preset and shader for inspection; a failed comparison does not block reuse.
+Differences are informational and never overwrite customisations. The base path stays visible after errors.
 
 The wrapper includes the original config and serializes only validated preset
 fields and recipe settings, with absolute installed shader paths. It does not
@@ -121,7 +128,7 @@ include downloaded example configs or execute contribution code. Dependencies ar
 defined once; existing local definitions, including customisations, remain in the base. An
 inert generation marker identifies ownership; it is never selected for rendering.
 
-## Local catalogue and library
+## Catalogue sources and installed library
 
 The plugin bundles the trusted generator/planner from the community repository
 as `helper/catalogue_contract.py`. It reads root metadata when present, otherwise
@@ -135,13 +142,20 @@ Local authoring mode includes unpublished experiments from the configured checko
 Online publication requires explicit `publish = true` on effects and families;
 that flag is independent of descriptive tags.
 
-Local authoring mode regenerates a catalogue from source files; it does not accept
-a draft JSON as a downloadable publication. File sizes and hashes bind installed
-content to the generated records. Each source file has one installed copy. Adding
-effects is allowed only when all existing installed files match the new catalogue;
-changed or customised installed bytes block installation. There is no automatic
-shader update or multiple-version store. The old Glow library and recovery records
-remain supported.
+Local authoring mode regenerates a catalogue from source files. Online mode only
+accepts published, non-draft schema-v1 JSON for the configured upstream repository.
+It rejects unsafe paths, unrecognised settings, mismatched dependencies, failed
+hashes and redirects. Downloads use bounded requests and a dedicated preview cache.
+Shader bytes are verified in memory and installed once, with no versioned shader
+store. Invalid refreshes leave the last good saved catalogue intact.
+
+In Online mode, existing presets in the base configuration take precedence.
+Previously installed presets are also reused with their own shader bytes,
+settings and overlays, preserving customisations as the catalogue changes.
+Shared notices are retained. Refresh updates the browser, not installed shader
+files. Automatic shader replacement is not implemented. Undo restores selections,
+not downloaded bytes. Local development mode retains its stricter snapshot checks.
+The old Glow library and recovery records remain supported.
 
 ## Troubleshooting
 
@@ -204,8 +218,8 @@ operation** explicitly restores the previous known configuration. If the
 compositor also restarted, recovery restores the original base.
 
 Ordinary plugin reloads and Noctalia restarts leave active selections intact.
-An Umbriel restart leaves the saved selection inactive until **Apply** is chosen again. This prototype deliberately has no automatic
-startup application or networking.
+An Umbriel restart leaves the saved selection inactive until **Apply** is chosen again. There is no automatic startup application. Online browsing may refresh metadata
+and previews at startup; it never applies a shader automatically.
 
 Disabling/uninstalling an active plugin starts the persistent helper to restore
 the base, but only while the plugin still owns the active wrapper. Cleanup
@@ -226,8 +240,8 @@ the plugin does not change its startup command.
 
 ## Current limits
 
-- Shaders are imported from a local checkout. No draft catalogue is treated as an
-  installable release, and nothing is fetched from GitHub or an API.
+- Online mode uses the Noctalia upstream catalogue. Local development mode is
+  explicit; draft JSON is never accepted as a downloadable publication.
 - There is one installed copy per shader. Customised files are preserved and shader
   updates are refused in this prototype. Undo changes selections, not shader bytes.
 - Startup config discovery reads the socket peer's process arguments and
@@ -259,6 +273,7 @@ the plugin does not change its startup command.
 python3 -m unittest discover -s tests -v
 noctalia plugins lint umbriel-shaders
 python3 tests/integration.py --source-root ../community-umbriel-shaders
+python3 tests/integration.py --online --host-smoke --keep
 ```
 
 The integration runner starts its own headless Umbriel with private runtime,
@@ -281,9 +296,13 @@ exercise visual search, card selection, a long workspace review, scrolling,
 single-click reveal Apply and Restore with virtual pointer clicks. Use `--host-only` for
 just these panel/lifecycle checks and `--size 640x480` for the compact regression.
 
-This needs Noctalia, `dbus-run-session` and `grim`. It isolates the shell's home,
-config, data, state, D-Bus session and IPC sockets, disables networking and plugin
-updates, and retains logs plus a panel capture when `--keep` is supplied. See
+The online test uses empty shader storage and the public upstream endpoint, with
+no shader checkout references. It tests downloads, one-step reveal, family Apply,
+Undo/Restore, restart, offline reuse and a deliberately corrupted download.
+
+Host tests need Noctalia, `dbus-run-session` and `grim`. They isolate the shell's home,
+config, data, state, D-Bus session and IPC sockets, disable shell networking and
+plugin updates, and retain logs plus a panel capture when `--keep` is supplied. See
 [validation results](VALIDATION.md) for the tested versions and remaining work.
 
 The plugin uses the documented [manifest/identity format](https://docs.noctalia.dev/noctalia/plugins/development/manifest/),

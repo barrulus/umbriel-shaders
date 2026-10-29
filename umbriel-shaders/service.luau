@@ -25,7 +25,11 @@ local function arguments(action, token, recovery, choice)
   end
   if action == "prepare" or action == "choose" or action == "catalogue" or action == "choose-family" or action == "diagnostics" then
     table.insert(args, "--source-root")
-    table.insert(args, noctalia.expandPath(noctalia.getConfig("source_root") or ""))
+    local source = "https://github.com/noctalia-dev/community-umbriel-shaders"
+    if noctalia.getConfig("source_mode") == "local" then
+      source = noctalia.expandPath(noctalia.getConfig("source_root") or "")
+    end
+    table.insert(args, source)
   end
   if (action == "prepare" or action == "choose") and choice then
     table.insert(args, "--effect")
@@ -87,7 +91,7 @@ local function run(action, token, choice)
     else
       publish(value)
     end
-  end)
+  end, 60000)
   if not launched then
     busy = false
     publish({ ok = false, message = "Could not start the shader helper." })

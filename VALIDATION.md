@@ -1,5 +1,42 @@
 # Local catalogue validation
 
+## Online catalogue (0.4.0, 2026-10-29)
+
+Online is the default source; the panel labels it and exposes Change source.
+Local development mode remains explicit. Public browsing fetched 136 effects,
+ten families and all 136 static previews from upstream commit
+`e46862db03984ab4780938b4ccc849f282f4d9a6` in an empty cache (about six seconds).
+No shader checkout was used by the online consumer.
+
+All 103 unit tests pass, including published JSON validation, pinned hashes,
+selective downloads, no partial installation on bad downloads, family dependencies,
+one-operation reveal, offline restart/reapply, custom local and installed preset
+reuse, failed refresh preservation and rejection of unsafe records. New tags and
+capability labels remain display/diagnostic metadata rather than blocking browsing.
+Plugin lint reports zero errors and warnings.
+
+Private native integration on Umbriel `0.1.0 (55655e4)` passed online browsing,
+Glow Apply/Undo and compilation, workspace Iris one-operation Apply/Restore,
+Flowering Vine family/overlay Apply/Undo, offline restart/reapply, and corrupt
+hash rejection with no live switch or partial library. Private Noctalia loaded
+the source selector, all preview cards and persistent recovery helper; disabling
+the plugin restored its private compositor's original configuration.
+Artifacts: `/tmp/us-test-6bpki5t8`; output:
+`/tmp/umbriel-shaders-online-integration.log`. The panel capture was inspected.
+The desktop compositor and original user configuration were not changed.
+
+The private test required Mesa and the available Intel render node:
+
+```sh
+env WLR_RENDER_DRM_DEVICE=/dev/dri/renderD129 \
+  __EGL_VENDOR_LIBRARY_FILENAMES=/run/opengl-driver/share/glvnd/egl_vendor.d/50_mesa.json \
+  python3 tests/integration.py --online --host-smoke --keep
+```
+
+This verifies selected online flows, not a fresh visual/GPU audit of every
+upstream effect. Installed shader replacement, automatic cross-session Apply
+and embedded recordings remain separate work.
+
 ## Current Umbriel IPC (0.3.4)
 
 Updated for installed and running Umbriel `0.1.0 (11bbdc7)`. Configuration

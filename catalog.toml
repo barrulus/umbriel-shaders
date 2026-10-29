@@ -1,11 +1,11 @@
 [[plugin]]
 id = "barrulus/umbriel-shaders"
 name = "Umbriel Shaders"
-version = "0.3.4"
+version = "0.4.0"
 plugin_api = 24
 author = "Barrulus"
 license = "MIT"
 icon = "sparkles"
-description = "Browse the local shader catalogue, review selections, apply and restore."
+description = "Browse community shaders online, download, apply and restore."
 tags = ["umbriel", "shaders"]
 dependencies = ["python3", "umbriel"]
