@@ -1,0 +1,44 @@
+id = "barrulus/umbriel-shaders"
+name = "Umbriel Shaders"
+version = "0.3.2"
+plugin_api = 24
+author = "Barrulus"
+license = "MIT"
+icon = "sparkles"
+description = "Browse the local shader catalogue, review selections, apply and restore."
+tags = ["umbriel", "shaders"]
+dependencies = ["python3", "umbriel"]
+
+[[setting]]
+key = "source_root"
+type = "folder"
+label_key = "settings.source_root.label"
+description_key = "settings.source_root.description"
+default = ""
+
+[[setting]]
+key = "base_config"
+type = "file"
+extensions = [".toml"]
+label_key = "settings.base_config.label"
+description_key = "settings.base_config.description"
+default = ""
+
+[[service]]
+id = "manager"
+entry = "service.luau"
+
+[[panel]]
+id = "shaders"
+entry = "panel.luau"
+width = 640
+height = 740
+placement = "floating"
+
+[[shortcut]]
+id = "open-shaders"
+entry = "shortcut.luau"
+
+[[widget]]
+id = "shaders-bar"
+entry = "widget.luau"
