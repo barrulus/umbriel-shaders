@@ -312,6 +312,10 @@ class Generator:
 
     def metadata(self, path):
         meta = self.source.toml(path)
+        return self.published_metadata(meta, path)
+
+    def published_metadata(self, meta, path):
+        table(meta, path)
         publish = meta.get("publish", False)
         require(type(publish) is bool, f"{path}: publish must be boolean")
         # Filter before reading presets, media, notices or family references so
@@ -533,15 +537,17 @@ class Generator:
             # are documentation, not an independent activation recipe.
             effect["activation"] = self.recipe(effect["config_example"], [effect_id]) if effect["uses"] else None
         families = []
-        for path in self.source.discover(self.metadata_root, "family.toml"):
-            relative = path if self.metadata_root == "." else path[len(self.metadata_root) + 1:]
-            directory = relative.removesuffix("/family.toml")
-            prefix, family_id = directory.split("/")
-            require(prefix == "families" and bool(SLUG.fullmatch(family_id)), f"{path}: invalid family ID")
-            meta = self.metadata(path)
+        family_path = "families.toml" if self.metadata_root == "." else self.metadata_root + "/families.toml"
+        definitions = self.source.toml(family_path) if self.source.exists(family_path) else {}
+        allow_keys(definitions, {"families"}, family_path)
+        definitions = table(definitions.get("families", {}), family_path + ": families")
+        for family_id, definition in sorted(definitions.items()):
+            path = family_path + ": " + family_id
+            require(bool(SLUG.fullmatch(family_id)), f"{path}: invalid family ID")
+            meta = self.published_metadata(definition, path)
             if meta is None:
                 continue
-            allow_keys(meta, {"name", "description", "members", "tags", "publish"}, path)
+            allow_keys(meta, {"name", "description", "members", "tags", "publish", "defaults"}, path)
             for key in ("name", "description"):
                 string(meta.get(key), path + ": " + key)
             members = strings(meta.get("members"), path + ": members", nonempty=True)
@@ -551,15 +557,22 @@ class Generator:
             closure(self.effects, members)
             tags = strings(meta.get("tags", []), path + ": tags")
             require(set(tags) <= TAGS, f"{path}: unreviewed tags")
-            presentation = self.presentation(directory)
-            recipe_path = path.removesuffix("family.toml") + "config.toml"
-            recipe = self.recipe(recipe_path if self.source.exists(recipe_path) else None, members)
+            defaults = table(meta.get("defaults", {}), path + ": defaults")
+            for slot, member in defaults.items():
+                string(member, path + ": default member")
+                require(member in members, f"{path}: default selection is not a member: {member}")
+                require(slot in self.effects[member]["uses"], f"{path}: unsupported default use {slot}")
+            recipe = None
+            if defaults:
+                plan = activation_for({"effects": list(self.effects.values()), "families": []}, defaults)
+                recipe = {"include": plan["include"], "settings": plan["settings"]}
             for member in members:
                 self.effects[member]["families"].append(family_id)
-            families.append({"id": family_id, "path": directory, "name": meta["name"],
+            families.append({"id": family_id, "name": meta["name"],
                              "description": meta["description"], "members": members, "tags": tags,
                              "authors": sorted({self.effects[m]["author"] for m in closure(self.effects, members)}),
-                             **presentation, "activation": recipe})
+                             "preview": {"image": None, "animation": None},
+                             "readme": None, "config_example": None, "activation": recipe})
         return {"schema_version": 1, "draft": self.source.revision is None,
                 "source": {"repository": REPOSITORY, "revision": self.source.revision},
                 "feature_definitions": FEATURES.copy(),

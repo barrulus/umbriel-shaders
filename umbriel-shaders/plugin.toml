@@ -1,6 +1,6 @@
 id = "barrulus/umbriel-shaders"
 name = "Umbriel Shaders"
-version = "0.3.2"
+version = "0.3.3"
 plugin_api = 24
 author = "Barrulus"
 license = "MIT"

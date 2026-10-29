@@ -1,5 +1,25 @@
 # Local catalogue validation
 
+## Metadata-only families (2026-10-29)
+
+Family definitions now live in root `families.toml`. Removed family directories,
+copied previews, README pages and activation examples, including the draft fixture
+folders. Definitions reference shader IDs and optional default member selections;
+the generator derives recommendations from those members' existing recipes.
+Family views compose the existing shader previews. All ten memberships and the
+previous default recipes are preserved; shader sources and runtime presets are unchanged.
+
+The catalogue has 142 effects, ten families and 751 downloadable files, none
+under a family path. All 52 catalogue tests and 84 plugin helper tests pass;
+plugin lint reports zero errors and warnings. Regression checks cover derived
+settings following member edits, invalid/default selections, publication filtering,
+committed-source isolation and browsing without family assets. The private Umbriel
+integration run applies/compiles/restores all catalogue uses, applies and undoes
+all ten families, and preserves customised local presets and runtime overrides.
+Artifacts: `/tmp/us-test-re5fkxce`; output:
+`/tmp/umbriel-metadata-families-integration.log`.
+
+
 Backend validated on 2026-10-27; browser updated on 2026-10-28 with Python 3.14.8, Umbriel `0.1.0 (3667399)`,
 Noctalia `v5.4.0 (125a30d)`, and Mesa software rendering.
 

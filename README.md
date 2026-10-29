@@ -21,17 +21,18 @@ library updates and per-window/output rules
 remain future work. Shader authoring metadata stays in `community-umbriel-shaders`;
 this repository owns the consumer and local management.
 
-The **Families** view presents ten coordinated collections with pack previews
-or member collages. Open a family to see members grouped by supported use;
+The **Families** view derives ten coordinated collections from root
+`families.toml` in the shader repository and composes existing member previews.
+Families have no folders, copied assets or separate configuration files. Open a family to see members grouped by supported use;
 selecting one opens its individual preview and Apply controls. **Apply family**
 stays below the scrolling members and applies the chosen uses together. Single
-options and explicit pack recommendations are preselected. When alternatives
+options and explicit metadata defaults are preselected. When alternatives
 share a use, choose one or **Keep current**; this leaves that use untouched.
 Companion overlays follow their borders instead of being enabled globally.
 One Undo restores the whole previous combination. A failure rolls the transaction
 back, including affected runtime selections. Existing local customisations are
-reused. Family timing recommendations are retained when later changing another
-use. Back returns to the family, and the shader view also links to its families.
+reused. Apply settings come from each selected shader’s existing recipe and remain
+unchanged when later selecting an unrelated use. Back returns to the family, and the shader view also links to its families.
 Search/type/tag filters work in both galleries.
 The shader gallery initially renders 24 cards, with Show more for the next batch;
 filters and search always consider all records.

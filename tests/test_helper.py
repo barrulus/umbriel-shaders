@@ -715,12 +715,26 @@ class ControllerTests(unittest.TestCase):
             (directory / "config.toml").write_text('[include]\nfiles = ' + json.dumps(["shaders/community/" + effect_id + "/effect.toml"]) + '\n' + recipe)
         return directory
 
-    def add_family(self, members, recipe=None):
-        directory = self.source / "families/test"
-        directory.mkdir(parents=True, exist_ok=True)
-        (directory / "family.toml").write_text('name = "Test family"\ndescription = "Coordinated tests"\nmembers = ' + json.dumps(members) + '\n')
-        if recipe:
-            (directory / "config.toml").write_text(recipe)
+    def add_family(self, members, defaults=None):
+        metadata = '[families.test]\nname = "Test family"\ndescription = "Coordinated tests"\nmembers = ' + json.dumps(members) + '\n'
+        if defaults:
+            metadata += '[families.test.defaults]\n' + ''.join(
+                json.dumps(slot) + ' = ' + json.dumps(effect) + '\n'
+                for slot, effect in defaults.items())
+        (self.source / "families.toml").write_text(metadata)
+
+    def test_metadata_only_family_browses_without_asset_folders(self):
+        self.add_family(["cursor/glow"], {"effects.cursor": "cursor/glow"})
+        (self.source / "cursor/glow/preview.png").write_bytes(b"preview")
+        catalogue = self.controller.catalogue(str(self.source))["catalogue"]
+        family = catalogue["families"][0]
+        self.assertEqual(family["members"], ["cursor/glow"])
+        self.assertEqual(family["local_preview"], {"image": None, "animation": None})
+        self.assertNotIn("path", family)
+        self.assertEqual(catalogue["effects"][0]["families"], ["test"])
+        self.assertTrue(catalogue["effects"][0]["local_preview"]["image"].endswith("cursor/glow/preview.png"))
+        self.assertFalse((self.source / "families").exists())
+        self.assertEqual(self.peer.switches, [])
 
     def test_family_apply_is_one_transaction_and_one_undo(self):
         self.add_effect("border/test-border")
@@ -772,15 +786,14 @@ class ControllerTests(unittest.TestCase):
 
     def test_family_recommendations_apply_only_to_chosen_slots(self):
         self.add_effect("animation/open", uses=["animation.windows_in"], recipe='[animation]\nenabled = true\n[animation.windows_in]\neffect = "open"\nenabled = true\nduration_ms = 600\ncurve = "linear"\n')
-        recipe = '[include]\nfiles = ["shaders/community/animation/open/effect.toml"]\n[animation]\nenabled = true\n[animation.windows_in]\neffect = "open"\nenabled = true\nduration_ms = 1300\ncurve = "linear"\n'
-        self.add_family(["animation/open"], recipe)
+        self.add_family(["animation/open"], {"animation.windows_in": "animation/open"})
         self.controller.choose_family(str(self.source), "test", {"animation.windows_in": "animation/open"})
         settings = self.controller.state()["current"]["settings"]
-        self.assertEqual(settings["animation.windows_in.duration_ms"], 1300)
+        self.assertEqual(settings["animation.windows_in.duration_ms"], 600)
         self.assertNotIn("animation.windows_out.effect", settings)
         self.add_effect("border/test-border")
         self.controller.choose(str(self.source), "border/test-border", "effects.border")
-        self.assertEqual(self.controller.state()["current"]["settings"]["animation.windows_in.duration_ms"], 1300)
+        self.assertEqual(self.controller.state()["current"]["settings"]["animation.windows_in.duration_ms"], 600)
 
     def test_family_partial_runtime_failure_rolls_back_all_slots(self):
         self.add_effect("border/test-border")
