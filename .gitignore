@@ -1,3 +1,7 @@
 __pycache__/
 *.pyc
 .test-results/
+build*/
+result
+.local/
+umbriel-shaders-native/bin/

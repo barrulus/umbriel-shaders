@@ -1,0 +1,61 @@
+id = "barrulus/umbriel-shaders-native"
+name = "Umbriel Shaders"
+version = "0.2.0"
+plugin_api = 24
+author = "Barrulus"
+license = "MIT"
+icon = "sparkles"
+description = "Browse community shaders, apply coordinated selections, undo and restore."
+dependencies = ["umbriel-shaders-native", "umbriel"]
+
+[[setting]]
+key = "source_mode"
+type = "select"
+label_key = "source.label"
+description_key = "source.description"
+default = "online"
+options = [{ value = "online", label_key = "source.online" }, { value = "local", label_key = "source.local" }, { value = "snapshot", label_key = "source.snapshot" }]
+[[setting]]
+key = "source_root"
+type = "folder"
+label_key = "checkout.label"
+description_key = "checkout.description"
+default = ""
+visible_when = { key = "source_mode", values = ["local"] }
+[[setting]]
+key = "catalogue_index"
+type = "file"
+extensions = [".json"]
+label_key = "catalogue.label"
+description_key = "catalogue.description"
+default = ""
+visible_when = { key = "source_mode", values = ["snapshot"] }
+[[setting]]
+key = "assets_root"
+type = "folder"
+label_key = "assets.label"
+description_key = "assets.description"
+default = ""
+visible_when = { key = "source_mode", values = ["snapshot"] }
+[[setting]]
+key = "base_config"
+type = "file"
+extensions = [".toml"]
+label_key = "base.label"
+description_key = "base.description"
+default = ""
+[[service]]
+id = "manager"
+entry = "service.luau"
+[[panel]]
+id = "shaders"
+entry = "panel.luau"
+width = 640
+height = 740
+placement = "floating"
+[[shortcut]]
+id = "open"
+entry = "shortcut.luau"
+[[widget]]
+id = "shaders-bar"
+entry = "widget.luau"

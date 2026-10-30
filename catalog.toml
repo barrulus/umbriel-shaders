@@ -1,11 +1,9 @@
 [[plugin]]
-id = "barrulus/umbriel-shaders"
+id = "barrulus/umbriel-shaders-native"
 name = "Umbriel Shaders"
-version = "0.4.0"
+version = "0.2.0"
 plugin_api = 24
 author = "Barrulus"
 license = "MIT"
-icon = "sparkles"
-description = "Browse community shaders online, download, apply and restore."
-tags = ["umbriel", "shaders"]
-dependencies = ["python3", "umbriel"]
+description = "Browse community shaders, apply coordinated selections, undo and restore."
+dependencies = ["umbriel-shaders-native", "umbriel"]

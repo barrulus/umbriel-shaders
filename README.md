@@ -1,313 +1,204 @@
 # Umbriel Shaders
 
-A Noctalia plugin for browsing, downloading and applying community Umbriel shaders.
-Choose an effect and a supported use, then Apply. Validation and installation
-of missing shader files happen automatically; Review remains optional. Undo, Restore original, and interrupted-operation recovery retain
-the same transactional flow as the original Glow prototype.
+A Noctalia plugin for browsing and applying community Umbriel shaders. A separate
+C++20 process owns catalogue access, validation,
+installation and transactions. The Luau service and panel use Noctalia's existing
+plugin API. Neither Noctalia nor Umbriel needs modifications.
 
-The repository is `umbriel-shaders`; the Noctalia plugin ID is
-`barrulus/umbriel-shaders`. Noctalia's source-repository layout places the plugin
-in `umbriel-shaders/`, indexed by the root `catalog.toml`.
+## Using the plugin
 
-The browser opens **Online · Noctalia community** by default. It reads the
-[published upstream catalogue](https://raw.githubusercontent.com/noctalia-dev/community-umbriel-shaders/catalogue/catalogue.json)
-and shows preview cards, tags, search, type filters and family views. No community
-shader checkout is required. **Change source** opens plugin settings, where
-**Catalogue source** switches between **Online — Noctalia community** and
-**Local development checkout**. Existing checkout paths are kept for development
-but are not read in Online mode.
+- Browse shaders or families, filter by type or tag, and search the complete catalogue.
+  The gallery initially renders 24 cards; Show more adds another batch.
+- Choose a supported destination and Apply. Review is optional and shows settings
+  changes and reused local presets. Compare local copy checks the definition and
+  shader fingerprint only when requested; a failed comparison does not prevent reuse.
+- Families let each supported destination choose a member or Keep current. Applying
+  a family is one transaction, with one Undo. Companion overlays follow their border.
+- Active selections lists every saved slot, including entries withdrawn from the
+  current catalogue. Remove releases one slot; Undo reverses that removal.
+- Restore original returns to the original configuration. Recover rolls back an
+  interrupted transaction. Both work without the catalogue or its assets.
+- Troubleshooting shows bounded diagnostics and offers a copyable report. Reports
+  include local paths and preset names, but exclude original configuration contents,
+  environment values and window titles/identities.
 
-Browsing fetches the JSON and static previews. **Apply** downloads only missing
-selected shaders, dependencies and notices, verifies their sizes and SHA-256,
-and applies the selection. URLs use the exact source commit recorded in the
-catalogue. Refresh checks for a newer catalogue. On a network failure, a saved
-catalogue and previews remain browsable; installed shaders can be reapplied
-offline. New shaders require a successful download.
+The bar widget is `barrulus/umbriel-shaders-native:shaders-bar`. The control-center
+shortcut opens the same panel. The panel keeps actions outside its scrolling content.
+Recordings open externally; embedded video playback and rule editing are outside
+this plugin's scope.
 
-Tags are visible on cards and shader views. **Details** contains credits,
-licensing, configuration changes and the optional local-copy comparison.
-Recordings still open through **Open recording externally**; embedded animation
-playback is separate work. Per-window/output rule editing also remains separate.
+### Catalogue sources
 
-The **Families** view reads coordinated collections from catalogue metadata and
-composes existing member previews. Authors define families in root `families.toml`.
-Families have no folders, copied assets or separate configuration files. Open a family to see members grouped by supported use;
-selecting one opens its individual preview and Apply controls. **Apply family**
-stays below the scrolling members and applies the chosen uses together. Single
-options and explicit metadata defaults are preselected. When alternatives
-share a use, choose one or **Keep current**; this leaves that use untouched.
-Companion overlays follow their borders instead of being enabled globally.
-One Undo restores the whole previous combination. A failure rolls the transaction
-back, including affected runtime selections. Existing local customisations are
-reused. Apply settings come from each selected shader’s existing recipe and remain
-unchanged when later selecting an unrelated use. Back returns to the family, and the shader view also links to its families.
-Search/type/tag filters work in both galleries.
-The shader gallery initially renders 24 cards, with Show more for the next batch;
-filters and search always consider all records.
+**Online** is the default. Startup immediately reads the cached JSON when available;
+first use downloads the index automatically. Refresh checks for updates and falls
+back to the saved index on network failure. Failed initial loads show an error and
+Retry button; live compositor-status updates do not hide that error. Only rendered
+preview cards request images, with at most four downloads in parallel. Each image
+appears as soon as its request finishes; a slow image does not delay the others.
+Selected assets use HTTPS URLs pinned to the catalogue's commit and are checked against size and SHA-256 before installation. Corrupt cached images are
+repaired on their next preview request. Refresh permits retrying failed previews.
 
-The unlicensed `animation/example` is excluded. Audio variants available only in a development checkout remain manual alternatives. Three overlays
-are dependency-only and cannot be selected as standalone window effects.
+**Local development checkout** generates the catalogue natively from authoring
+TOML files, including unpublished/manual development entries. The cache invalidates
+on file metadata changes; Refresh forces regeneration. Manual entries are browsable
+but cannot be applied without a supported recipe. The native generator reads the
+authoring metadata directly.
 
-## Run locally
+**Saved catalogue and snapshot** uses an already published index and matching asset
+tree. Selected bytes must match their catalogue hashes. No network is required.
 
-Requirements: Linux, Python 3.11 or newer, Noctalia plugin API 24 or newer, and
-Umbriel with named cursor presets, configuration validation, effect inspection
-and `config-replace`, using the current IPC contract (tested with `11bbdc7`).
-Configuration commands send string arrays in `args`; effect actions use typed
-JSON fields with explicit window/output targets. Apply, Undo, Restore and the
-persistent recovery helper use the same protocol. The helper checks the running
-compositor's interface.
+Set **Original Umbriel configuration** if discovery is insufficient, especially for
+system config search paths. Explicit compositor `-c` and user config paths are
+supported. Restore before changing the base path of an active managed selection.
+If an external config replacement has abandoned the native wrapper, explicitly
+selecting its original base path permits a new reviewed transaction.
 
-1. In Noctalia **Settings → Plugins**, add a **path** source pointing to
-   `~/dev/umbriel-shaders`, then enable **Umbriel Shaders**.
-2. Leave **Catalogue source** set to **Online — Noctalia community**. For shader
-   authoring, choose **Local development checkout** and set its folder instead.
-3. Set **Original Umbriel configuration** if startup discovery is insufficient.
-   Custom `-c` paths and read-only/declarative configurations are supported.
-4. Open the panel:
+## Build and test
 
-   ```sh
-   noctalia msg panel-toggle barrulus/umbriel-shaders:shaders
-   ```
-
-   To put it on the bar, open **Settings → Bar → Widgets**, choose a section,
-   and add **Umbriel Shaders** (`barrulus/umbriel-shaders:shaders-bar`). Its sparkle
-   icon opens the browser. The existing Control Center shortcut is also available.
-   Reload the plugin after updating so Noctalia discovers the bar widget entry.
-5. Select a preview card, choose its supported use, then **Apply**. The plugin
-   validates, installs missing presets and switches the selection in one operation.
-   **Details** opens an optional review, including for workspace reveal shaders.
-
-The action bar keeps the destination, Apply, Undo, Restore and Details below a
-bounded scrolling area. Settings, Refresh and Close are in the header. Details
-shows settings that actually change; identical before/after values are omitted.
-
-Browsing validates the catalogue without installing shader content or changing
-the compositor. Review uses existing local presets as-is.
-Only missing presets, their required dependencies and notices are imported;
-then a candidate wrapper is validated. Apply
-rechecks the reviewed inputs before switching and verifies GPU compilation.
-
-Selections accumulate across slots. Adding a border preserves a managed cursor;
-choosing a different cursor replaces that cursor selection. A multi-use effect
-changes only the chosen event, even if its recipe recommends several events.
-The review shows all managed settings and shared prerequisites, including enabling
-animations. Applying a persistent effect sets the global default and switches
-current windows/outputs, handling existing runtime selections and suppression.
-New windows still follow the configured default and any applicable base rules.
-Companions without declared uses and effects without a recipe cannot be applied
-independently. Requirements outside selected slots must already be satisfied by
-the base; unresolved conflicts block Review.
-
-The community catalogue targets latest Umbriel. Maintainers update or withdraw
-incompatible shaders instead of retaining old variants. Capability tags remain
-diagnostic metadata; missing runtime evidence does not require confirmation.
-Known missing settings, invalid configuration, file integrity failures and shader
-compilation failures still stop Apply, with rollback if switching has begun.
-
-**Undo** restores one previous plugin selection. **Restore original** returns to
-the base file's current contents. Runtime selections changed by the plugin are
-journaled too: Undo/Restore recover prior selectors, runtime pool members and
-suppression. Closed windows are skipped by stable ID; no action falls back to the
-focused window. Runtime changes made externally after Apply are left alone when
-they no longer match the plugin's last selection. Neither action edits the base file. If a named preset already exists in the base configuration, its local
-shader, colours and settings take precedence. Review reports **Already exists
-locally — using your local copy**. No replacement copy is installed and no local
-preset definition is rewritten. A local border keeps its own overlay reference;
-unused catalogue dependencies are not imported. The local preset must have the
-kind required by the selected use and pass the compositor's normal validation.
-
-**Compare with catalogue** optionally reports whether local settings and shader
-bytes match the selected catalogue. Online comparison may download the selected
-preset and shader for inspection; a failed comparison does not block reuse.
-Differences are informational and never overwrite customisations. The base path stays visible after errors.
-
-The wrapper includes the original config and serializes only validated preset
-fields and recipe settings, with absolute installed shader paths. It does not
-include downloaded example configs or execute contribution code. Dependencies are
-defined once; existing local definitions, including customisations, remain in the base. An
-inert generation marker identifies ownership; it is never selected for rendering.
-
-## Catalogue sources and installed library
-
-The plugin bundles the trusted generator/planner from the community repository
-as `helper/catalogue_contract.py`. It reads root metadata when present, otherwise
-uses `docs/catalogue-examples` in the configured checkout. No Python code is loaded
-from that checkout. `helper/catalogue_client.py` converts the validated records
-into browser entries and installation plans. Keep the bundled contract in sync
-with reviewed community contract changes; its source is `tools/catalogue.py`
-(SPDX MIT, copyright Barrulus 2026).
-
-Local authoring mode includes unpublished experiments from the configured checkout.
-Online publication requires explicit `publish = true` on effects and families;
-that flag is independent of descriptive tags.
-
-Local authoring mode regenerates a catalogue from source files. Online mode only
-accepts published, non-draft schema-v1 JSON for the configured upstream repository.
-It rejects unsafe paths, unrecognised settings, mismatched dependencies, failed
-hashes and redirects. Downloads use bounded requests and a dedicated preview cache.
-Shader bytes are verified in memory and installed once, with no versioned shader
-store. Invalid refreshes leave the last good saved catalogue intact.
-
-In Online mode, existing presets in the base configuration take precedence.
-Previously installed presets are also reused with their own shader bytes,
-settings and overlays, preserving customisations as the catalogue changes.
-Shared notices are retained. Refresh updates the browser, not installed shader
-files. Automatic shader replacement is not implemented. Undo restores selections,
-not downloaded bytes. Local development mode retains its stricter snapshot checks.
-The old Glow library and recovery records remain supported.
-
-## Troubleshooting
-
-Open **Settings → Troubleshooting** in the plugin, or use **Troubleshooting**
-inside a shader's **Details**. The section selector shows:
-
-- **Overview:** whether the plugin owns the live configuration, the data folder,
-  catalogue source and inspection errors.
-- **Original configuration:** the base path and its currently referenced files,
-  including resolved symlinks and missing optional files.
-- **Managed configuration:** the generated TOML, read-only, with a warning if its
-  disk contents have changed since Apply. A matching runtime generation marker
-  establishes ownership; Umbriel does not expose the active configuration path.
-- **Saved selections:** shader IDs and managed settings, distinguished from live
-  observations. Automatic cross-session restoration is still not implemented.
-- **Live state:** cursor, window and output selections, runtime overrides,
-  suppression, pools and loaded shader compilation states. Changes since the
-  plugin's last runtime selection are highlighted. Animation defaults are shown
-  from saved settings because the live effects query does not expose them.
-- **Last operation:** the latest Review, Apply, family Apply, Undo, Restore or
-  Recover outcome, including validation, compilation and rollback results.
-
-**Copy report** copies these sections as plain text. **Open data folder** opens
-the plugin's persistent storage in the file manager. The report contains local
-paths, generated configuration and diagnostic messages; it does not dump original
-configuration files, process environments or window app IDs. Large sections are
-explicitly truncated. Refreshing or copying a report never switches configuration,
-installs shaders, compiles them or runs recovery.
-
-Diagnostics still show the available disk information if Umbriel is unreachable
-or state files are damaged. New operations are recorded in `last-operation.json`;
-older operations cannot be reconstructed. Interrupted operations remain marked
-incomplete, and logging failures do not affect Apply or recovery.
-
-The same read-only report is available without the panel:
+Requirements: Linux; Noctalia plugin API 24; Umbriel with named presets, effect
+inspection, explicit effect targets, config validation and `config-replace`;
+C++20; CMake 3.20+; nlohmann/json 3.11+; toml++ 3.4+; OpenSSL Crypto; libcurl 7.85+.
+Python 3.11+ is a development/test dependency. Ninja is optional.
 
 ```sh
-python3 /path/to/umbriel-shaders/umbriel-shaders/helper/umbriel_shaders.py \
-  --state-dir ~/.local/state/noctalia/plugins/data/barrulus/umbriel-shaders diagnostics
+# Optional Nix development environment:
+nix-shell shell.nix
+cmake -S . -B build-native -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build-native
+ctest --test-dir build-native --output-on-failure
+noctalia plugins lint umbriel-shaders-native
 ```
 
-The helper prints JSON containing `diagnostics.report_text` and the individual
-sections. Custom data locations are shown in Overview.
+For UI workflow tests, supply `-DLUAU_SOURCE_DIR=/path/to/noctalia/third_party/luau`
+when configuring. This builds a test interpreter from Noctalia's vendored Luau;
+it is not part of the installed plugin/helper. The tests exercise the actual panel
+and service scripts with a simulated Noctalia host.
 
-## Recovery and lifecycle
-
-The plugin stores its shader files, hashes, candidate configurations, selection
-records and transaction journal outside the replaceable plugin directory. A
-standalone recovery helper is also preserved there. The default location is:
-
-```text
-~/.local/state/noctalia/plugins/data/barrulus/umbriel-shaders/
-```
-
-Noctalia's `NOCTALIA_STATE_HOME` / `XDG_STATE_HOME` overrides change that location.
-The helper serializes operations with a lock and records intent before sending
-`config-replace`. A rejected switch or detected compilation failure restores the
-previous configuration. A process crash leaves a journal; **Recover interrupted
-operation** explicitly restores the previous known configuration. If the
-compositor also restarted, recovery restores the original base.
-
-Ordinary plugin reloads and Noctalia restarts leave active selections intact.
-An Umbriel restart leaves the saved selection inactive until **Apply** is chosen again. There is no automatic startup application. Online browsing may refresh metadata
-and previews at startup; it never applies a shader automatically.
-
-Disabling/uninstalling an active plugin starts the persistent helper to restore
-the base, but only while the plugin still owns the active wrapper. Cleanup
-cannot be guaranteed after a crash, an interrupted apply, or removal of an
-already-disabled plugin. If the panel is unavailable, recovery remains usable:
+An optional complete-catalogue check prepares every applicable effect/use and each
+family's defaults, then runs Umbriel's actual configuration validator. It uses a
+synthetic peer and performs no config switching or GPU work:
 
 ```sh
-python3 ~/.local/state/noctalia/plugins/data/barrulus/umbriel-shaders/recovery.py \
-  --state-dir ~/.local/state/noctalia/plugins/data/barrulus/umbriel-shaders recover
+cmake --build build-native --target native-catalogue-review
+build-native/native-catalogue-review /path/to/catalogue.json /path/to/assets "$(command -v umbriel)"
 ```
 
-Use `restore` instead of `recover` for an ordinary active selection without an
-interrupted-operation journal. From a TTY, pass `--socket` with the correct
-absolute Umbriel socket path if the session environment is unavailable. These
-commands refuse a foreign socket/session rather than guessing. If the compositor
-cannot answer IPC, fix the original configuration and restart the compositor;
-the plugin does not change its startup command.
+For address and undefined-behaviour checks, configure a separate Debug build with
+`-DENABLE_SANITIZERS=ON`, build it, and run CTest there. The private Unix-socket test
+returns **skipped**, not passed, when the execution environment prohibits socket
+binding. No automated test connects to the desktop compositor.
 
-## Current limits
-
-- Online mode uses the Noctalia upstream catalogue. Local development mode is
-  explicit; draft JSON is never accepted as a downloadable publication.
-- There is one installed copy per shader. Customised files are preserved and shader
-  updates are refused in this prototype. Undo changes selections, not shader bytes.
-- Startup config discovery reads the socket peer's process arguments and
-  environment. Umbriel does not expose its current config path, so an external
-  `config-replace` **before first setup** cannot be inferred. Review the base path
-  explicitly. After setup, generation markers detect loss of wrapper ownership;
-  external replacements are left unchanged. To manage a replacement, explicitly
-  choose its base path in settings and perform a new review; Undo then returns
-  to that newly chosen base.
-- One compositor socket is supported per data directory. A second session needs
-  a separate state directory. A restart on the same socket is recognized by the
-  process identity and boot/start time.
-- Config includes are inspected with bounded size/depth and missing optional
-  includes are tracked. Duplicate/cyclic includes are reported. Validation uses
-  the executable and environment of the running compositor, not a different
-  Umbriel found on `PATH`.
-- Live compilation is checked for every selected shader and dependency. Passing
-  compilation does not establish visual suitability or support for unknown API
-  capabilities; those remain visible in Review.
-- The compositor exposes current selectors, pool members and suppression, but not
-  hidden pool-selection history. Returning to a configuration-driven pool may make
-  a fresh policy choice; explicit runtime pool members are restored.
-- Lifecycle cleanup is best effort. Keep the persistent data until the compositor
-  no longer references it. Deleting shader files is not a disable operation.
-
-## Development checks
+The standalone GPU test starts its own headless compositor with private state,
+empty autostart and software GLES. It requires access to the host graphics stack:
 
 ```sh
-python3 -m unittest discover -s tests -v
-noctalia plugins lint umbriel-shaders
-python3 tests/integration.py --source-root ../community-umbriel-shaders
-python3 tests/integration.py --online --host-smoke --keep
+python3 -B tests/real_compositor.py \
+  --helper build-native/umbriel-shaders-native \
+  --catalogue-index /absolute/path/catalogue.json \
+  --assets /absolute/path/snapshot --all-types
 ```
 
-The integration runner starts its own headless Umbriel with private runtime,
-config and state directories and Mesa software rendering. It still requires a
-usable graphics device. Runtime override checks also require `foot` to map a real
-window in the private compositor. It checks Review/Apply/Undo/Restore, compilation,
-interrupted commit recovery and compositor restart. It never connects to the
-desktop's compositor socket.
+## Install
 
-To also load the Luau service and panel in a private Noctalia instance and verify
-disable cleanup:
+This repository is the C++/Luau application. Python is used only by tests and the
+startup benchmark; it is not a runtime dependency. The retired Python plugin,
+reference tests, and backend-switching tools have been removed.
+
+CMake installs `bin/umbriel-shaders-native` and the plugin source under
+`share/noctalia/plugins`. Add that directory as a Noctalia path source and keep the
+helper on Noctalia's PATH:
 
 ```sh
-python3 tests/integration.py --source-root ../community-umbriel-shaders \
-  --host-smoke --keep
+cmake --install build-native --prefix ~/.local
+# Or build the complete Nix package:
+nix-build -E 'let pkgs = import <nixpkgs> {}; in pkgs.callPackage ./package.nix {}'
 ```
 
-Add `--pointer-client /path/to/umbriel/build-debug/tests/pointer-client` to also
-exercise visual search, card selection, a long workspace review, scrolling,
-single-click reveal Apply and Restore with virtual pointer clicks. Use `--host-only` for
-just these panel/lifecycle checks and `--size 640x480` for the compact regression.
+For development, the repository root is itself a Noctalia path source. Build the
+helper, then make it available either on Noctalia's PATH or at
+`umbriel-shaders-native/bin/umbriel-shaders-native`. The bundled executable takes
+precedence. Binaries and local installation files are ignored by Git.
 
-The online test uses empty shader storage and the public upstream endpoint, with
-no shader checkout references. It tests downloads, one-step reveal, family Apply,
-Undo/Restore, restart, offline reuse and a deliberately corrupted download.
+The permanent local checkout is `~/dev/umbriel-shaders`. It replaces the earlier
+Python checkout and the temporary native test source. The plugin ID remains
+`barrulus/umbriel-shaders-native`, preserving native settings, state and widget IDs.
+Enable only this source's shader plugin. On Nix, retain the helper's library store
+paths through an installed package/profile or GC roots while effects are managed.
 
-Host tests need Noctalia, `dbus-run-session` and `grim`. They isolate the shell's home,
-config, data, state, D-Bus session and IPC sockets, disable shell networking and
-plugin updates, and retain logs plus a panel capture when `--keep` is supplied. See
-[validation results](VALIDATION.md) for the tested versions and remaining work.
+Noctalia copies plugin sources; it does not compile C++ or install the external
+helper dependency. Keep the executable and its libraries available for
+Disable/Uninstall cleanup and recovery.
 
-The plugin uses the documented [manifest/identity format](https://docs.noctalia.dev/noctalia/plugins/development/manifest/),
-[source repository layout](https://docs.noctalia.dev/noctalia/plugins/development/workflow/),
-and [service lifecycle](https://docs.noctalia.dev/noctalia/plugins/development/entries/#cleaning-up-when-an-entry-exits).
+## Transactions and recovery
 
-Code is MIT licensed. Imported shaders keep their own notices; the plugin does
-not relicense community content.
+The plugin keeps separate state under `native-v1` in its Noctalia data directory.
+State schema 3 reads schema 2 from the cursor prototype. The state directory belongs to this native plugin.
+
+A reviewed plan records the compositor session, active selections and fingerprints
+of base/generated files. Apply checks them again, writes durable intent, validates
+with the authenticated compositor's executable/environment, replaces the config,
+applies explicit runtime targets and verifies shader compilation. Errors roll back;
+a failed rollback retains the recovery journal. Another managed wrapper blocks
+replacement. Closed-window records are pruned, and compositor restarts discard old
+window identities. Unrelated external runtime changes are preserved on Undo/Restore.
+
+The original configuration is included by a generated wrapper and is never edited.
+Base presets take precedence over installed copies. Installed records contain
+validated definitions with controlled shader paths, rather than downloaded include
+graphs. Reused border presets resolve their actual overlay through the same
+base-first resolver. Unchanged selections retain their activation recipes even if
+the catalogue withdraws them or changes those recipes.
+
+Before a preparation that may lead to Apply, the helper preserves an executable
+at `native-v1/recovery`. Disable/uninstall starts that copy with `--wait-lock restore`.
+If cleanup was interrupted, use the preserved helper explicitly:
+
+```sh
+/path/to/native-v1/recovery --state-dir /path/to/native-v1 \
+  --socket /absolute/umbriel.sock recover
+```
+
+Use `restore` when there is no pending journal. Recovery needs neither the original
+helper install path nor catalogue assets. It **does** need the executable's shared
+libraries. On Nix, keep its package/profile or test-bundle GC roots until Restore
+has completed. The copied executable is not a static distribution.
+
+## Implementation and bounds
+
+- `storage.cpp`: bounded JSON/files, fingerprints, durable replacement and locks.
+- `registry.cpp`, `source.cpp`, `local.cpp`: metadata validation, HTTPS/cache access
+  and native authoring generation. Downloads are bounded and have deadlines.
+- `catalogue.cpp`, `selection.cpp`: projections, shared dependency resolution,
+  installation, validated activation settings and family choices.
+- `peer.cpp`, `runtime.cpp`: authenticated IPC, explicit targets and batched runtime
+  restoration. Ordinary batches use a constant number of full status queries;
+  only pool cycling and disappearing-target recovery need extra queries.
+- `controller.cpp`: Review/Apply/Undo/Restore/recovery and generation lifetime.
+- `diagnostics.cpp`, `main.cpp`: reports and the versioned CLI JSON protocol.
+- Luau `lib/catalogue.luau`: cached UI indexes shared by gallery/family rendering.
+  The service serializes operations while at most four background preview processes
+  publish images individually as they finish.
+
+There is one outstanding review, one current generation and one Undo generation.
+Catalogue responses are paginated below Noctalia's 1 MiB transport ceiling. Indexes
+are capped at 4 MiB, 512 effects and 64 families; individual display records and
+selected file sizes are bounded. Stale cache objects are collected on Refresh;
+current catalogue objects and customized installed presets are retained.
+
+## Source layout
+
+- `src/`: the C++ helper, shared core, catalogue, storage and transactions.
+- `umbriel-shaders-native/`: Luau panel/service/widget, manifest and translations.
+- `tests/`: native unit, CLI, UI workflow and private-compositor checks.
+- `tools/benchmark.py`: native process-start measurements.
+- `CMakeLists.txt`, `package.nix`, `shell.nix`: build, packaging and development.
+
+The root `catalog.toml` advertises only the native plugin. Tests use synthetic
+fixtures or explicitly supplied catalogue assets; no retired application is needed.
+
+## Validation
+
+See [VALIDATION.md](VALIDATION.md) for checks run during the in-place replacement.
+The Unix-socket fixture reports a skip when sandbox restrictions prevent binding;
+run it on the host to exercise IPC. The separate compositor test needs a working
+graphics stack. UI tests require `LUAU_SOURCE_DIR` as described above.

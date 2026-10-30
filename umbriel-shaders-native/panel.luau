@@ -2,6 +2,10 @@
 local opened = false
 local status = noctalia.state.get("status") or {}
 local catalogue = noctalia.state.get("catalogue") or {}
+local catalogueStatus = noctalia.state.get("catalogue_status") or {}
+local catalogueModel = require("./lib/catalogue.luau")
+local model = catalogueModel.index(catalogue)
+local previewWanted, previewAttempted = {}, {}
 local chosen, chosenSlot = "cursor/glow", "effects.cursor"
 local browsing, details, comparing = true, false, false
 local query, tag = "", ""
@@ -30,33 +34,19 @@ local diagnosticReturn = nil
 local diagnostics = noctalia.state.get("diagnostics") or {}
 local diagnosticSection = 1
 
-local function request(action, token)
+local function request(action, token, compare)
   pendingAction = action
   pendingLocalCopy = action == "apply" and #(status.local_copies or {}) > 0
   local serial = (noctalia.state.get("request_serial") or 0) + 1
   noctalia.state.set("request_serial", serial)
-  noctalia.state.set("request", { serial = serial, action = action, token = token, effect = chosen, slot = chosenSlot, family = familyId, choices = familyChoices[familyId] })
+  noctalia.state.set("request", { serial = serial, action = action, token = token, compare = compare, effect = chosen, slot = chosenSlot, family = familyId, choices = familyChoices[familyId] })
 end
-local function selection()
-  for _, effect in ipairs(catalogue.effects or {}) do
-    if effect.id == chosen then return effect end
-  end
-  return nil
-end
+local function selection() return model.effects[chosen] end
 local function contains(values, value)
   for _, item in ipairs(values or {}) do if item == value then return true end end
   return false
 end
-local function allTags()
-  local found, values = {}, {}
-  for _, effect in ipairs(catalogue.effects or {}) do
-    for _, value in ipairs(effect.tags or {}) do
-      if not found[value] then found[value] = true; table.insert(values, value) end
-    end
-  end
-  table.sort(values)
-  return values
-end
+local function allTags() return model.tags end
 local function choose(effect, slot)
   if status.busy then return end
   chosen, chosenSlot = effect.id, slot or (effect.uses or {})[1]
@@ -100,13 +90,19 @@ local function tagChips(effect, compact)
   return ui.column({ gap = 6 }, rows)
 end
 local function preview(effect, width, height)
-  local path = (effect.local_preview or {}).image
+  if model.effects[effect.id] and not previewAttempted[effect.id] and #previewWanted < 24 then
+    previewAttempted[effect.id] = true
+    table.insert(previewWanted, effect.id)
+  end
+  local localPreview = effect.local_preview or {}
+  local path = localPreview.image
   if type(path) == "string" and path ~= "" then
     return ui.image({ key = "preview-" .. effect.id, path = path, width = width, height = height, fit = "contain", radius = 10 })
   end
   return ui.column({ height = height, width = width, align = "center", justify = "center", fill = "primary/0.08", radius = 10 }, {
     ui.glyph({ name = "sparkles", size = 36, color = "primary" }),
-    ui.label({ text = "Preview coming soon", fontSize = 12 }),
+    ui.label({ text = localPreview.error and "Preview unavailable" or ((effect.preview or {}).image and "Loading preview…" or "No preview available"),
+      tooltip = localPreview.error, fontSize = 12 }),
   })
 end
 local function matches(effect)
@@ -121,12 +117,28 @@ local function isActive(effect)
   for _, id in pairs(status.selections or {}) do if id == effect.id then return true end end
   return false
 end
+local function emptyGallery(noun, records)
+  local filtered = records and #records > 0
+  local message
+  if filtered then message = "No " .. noun .. " match your filters."
+  elseif catalogueStatus.loading then message = "Loading " .. noun .. "…"
+  elseif catalogueStatus.error then message = "Could not load " .. noun .. ".\n" .. catalogueStatus.error
+  elseif records then message = "No " .. noun .. " in this catalogue."
+  else message = "No " .. noun .. " loaded." end
+  return ui.column({ key = "empty-gallery", padding = 24, gap = 12, align = "center" }, {
+    ui.glyph({ name = "search", size = 32 }),
+    ui.label({ key = "catalogue-message", text = message, maxLines = 6 }),
+    ui.button({ text = "Clear filters", onClick = "clearFilters", visible = filtered }),
+    ui.button({ key = "retry-catalogue", text = catalogueStatus.error and "Retry" or "Load catalogue", onClick = "refresh",
+      visible = not filtered and not catalogueStatus.loading, enabled = not status.busy }),
+  })
+end
 local function browserContent(records, ignoreFilters, slot)
   local children, row, count = {}, {}, 0
   for _, effect in ipairs(records or catalogue.effects or {}) do
     if ignoreFilters or matches(effect) then
       count += 1
-      if ignoreFilters or count <= visibleLimit then
+      if count <= visibleLimit then
       local entry = effect
       table.insert(row, ui.column({ key = entry.id, gap = 8, padding = 10, flexGrow = 1,
         fill = "surface_variant/0.65", radius = 12, border = isActive(entry) and "primary" or "outline/0.25",
@@ -141,37 +153,21 @@ local function browserContent(records, ignoreFilters, slot)
     end
   end
   if #row > 0 then table.insert(row, ui.spacer({ flexGrow = 1 })); table.insert(children, ui.row({ gap = 12, align = "start" }, row)) end
-  if not ignoreFilters and count > visibleLimit then
+  if count > visibleLimit then
     table.insert(children, ui.button({ key = "show-more", text = "Show more (" .. tostring(visibleLimit) .. " of " .. tostring(count) .. ")", onClick = "showMore" }))
   end
-  if count == 0 then
-    table.insert(children, ui.column({ padding = 24, gap = 12, align = "center" }, {
-      ui.glyph({ name = "search", size = 32 }),
-      ui.label({ text = catalogue.effects and "No shaders match your filters." or "Loading shaders…", maxLines = 2 }),
-      ui.button({ text = "Clear filters", onClick = "clearFilters", visible = query ~= "" or tag ~= "" or kindIndex ~= 1 }),
-    }))
-  end
+  if count == 0 then table.insert(children, emptyGallery("shaders", catalogue.effects)) end
   return children, count
 end
-local function familySelection()
-  for _, family in ipairs(catalogue.families or {}) do if family.id == familyId then return family end end
-  return nil
-end
+local function familySelection() return model.families[familyId] end
 local function openFamily(id)
   if status.busy then return end
   familyId, galleryMode, browsing, details = id, "families", true, false
+  visibleLimit = 24
   notice = nil
   render()
 end
-local function familyMembers(family)
-  local members = {}
-  for _, id in ipairs(family.members or {}) do
-    for _, effect in ipairs(catalogue.effects or {}) do
-      if effect.id == id then table.insert(members, effect); break end
-    end
-  end
-  return members
-end
+local function familyMembers(family) return model.members[family.id] or {} end
 local function familyPreview(family)
   if (family.local_preview or {}).image then return preview(family, 240, 120) end
   local rows, row = {}, {}
@@ -191,6 +187,7 @@ local function familyGallery()
     local haystack = string.lower(family.name .. " " .. family.description .. " " .. table.concat(family.tags or {}, " ") .. " " .. table.concat(family.authors or {}, " "))
     if kindMatch and (tag == "" or contains(family.tags, tag)) and (query == "" or string.find(haystack, string.lower(query), 1, true)) then
       count += 1
+      if count <= visibleLimit then
       local entry = family
       table.insert(row, ui.column({ key = "family-" .. entry.id, gap = 8, padding = 10, flexGrow = 1,
         fill = "surface_variant/0.65", radius = 12, border = "outline/0.25", tooltip = entry.description,
@@ -201,35 +198,22 @@ local function familyGallery()
         ui.label({ text = tostring(#entry.members) .. " related shaders", fontSize = 12 }),
       }))
       if #row == 2 then table.insert(children, ui.row({ gap = 12, align = "start" }, row)); row = {} end
-    end
-  end
-  if #row > 0 then table.insert(row, ui.spacer({ flexGrow = 1 })); table.insert(children, ui.row({ gap = 12 }, row)) end
-  if count == 0 then
-    table.insert(children, ui.label({ text = "No families match your filters.", maxLines = 2 }))
-    table.insert(children, ui.button({ text = "Clear filters", onClick = "clearFilters" }))
-  end
-  return children, count
-end
-local function familyGroups(family)
-  local bySlot, groups = {}, {}
-  for _, effect in ipairs(familyMembers(family)) do
-    if effect.role ~= "companion" and effect.activation then
-      for _, slot in ipairs(effect.uses or {}) do
-        bySlot[slot] = bySlot[slot] or {}
-        table.insert(bySlot[slot], effect)
       end
     end
   end
-  local order = { "animation.workspaces", "animation.windows_in", "animation.windows_out", "effects.border", "effects.window", "effects.cursor", "effects.screen", "animation.windows_move", "animation.overview", "animation.scratchpad", "animation.border", "animation.dim_unfocused", "animation.layers" }
-  for _, slot in ipairs(order) do if bySlot[slot] then table.insert(groups, { slot = slot, members = bySlot[slot] }) end end
-  return groups
+  if #row > 0 then table.insert(row, ui.spacer({ flexGrow = 1 })); table.insert(children, ui.row({ gap = 12 }, row)) end
+  if count > visibleLimit then table.insert(children, ui.button({ text = "Show more families", onClick = "showMore" })) end
+  if count == 0 then table.insert(children, emptyGallery("families", catalogue.families)) end
+  return children, count
 end
+local function familyGroups(family) return model.groups[family.id] or {} end
 local function initialiseFamilyChoices(family)
   if familyChoices[family.id] then return end
   local choices = {}
   for _, group in ipairs(familyGroups(family)) do
     local selector = string.sub(group.slot, 1, 10) == "animation." and group.slot .. ".effect" or group.slot
     local preferred = ((family.activation or {}).settings or {})[selector]
+    if #group.members == 0 then choices[group.slot] = "" end
     for _, effect in ipairs(group.members) do
       if #group.members == 1 or effect.preset == preferred then choices[group.slot] = effect.id end
     end
@@ -278,6 +262,7 @@ local function familyContent(family)
         elseif i == 1 then familyChoices[family.id][use] = ""
         else familyChoices[family.id][use] = members[i - 1].id end
         notice = nil
+        status.plan_token = nil
         render()
       end,
     }))
@@ -322,7 +307,7 @@ local function technicalDetails(effect, hasPlan)
       table.insert(content, ui.button({ text = comparing and "Hide local comparison" or "Compare local copy", onClick = "compareLocal" }))
       if comparing then
         for _, copy in ipairs(status.local_copies) do
-          local result = "Local dependency; not compared."
+          local result = copy.comparison_error and ("Comparison unavailable: " .. copy.comparison_error) or "Local dependency; not compared."
           if copy.matches_catalogue == true then result = "Matches the catalogue."
           elseif copy.matches_catalogue == false then result = "Customised locally; your changes are kept." end
           table.insert(content, ui.label({ text = copy.preset .. ": " .. result .. "\n" .. copy.config, maxLines = 5 }))
@@ -352,6 +337,35 @@ local function supportHeader(title)
 end
 
 local function renderSupport()
+  if supportView == "active" then
+    local content = {}
+    for slot, id in pairs(status.selections or {}) do
+      local effect = model.effects[id]
+      local use = slot
+      table.insert(content, ui.row({ gap = 8, align = "center" }, {
+        ui.label({ text = (labels[use] or use) .. "\n" .. (effect and effect.name or (id .. " · no longer listed")), maxLines = 3, flexGrow = 1 }),
+        ui.button({ text = "Remove", enabled = status.managed == true and not status.busy and not status.pending,
+          tooltip = "Release this selection and return this use to the original configuration",
+          onClick = function()
+            local serial = (noctalia.state.get("request_serial") or 0) + 1
+            noctalia.state.set("request_serial", serial)
+            noctalia.state.set("request", { serial = serial, action = "remove", slot = use })
+          end }),
+      }))
+    end
+    if #content == 0 then table.insert(content, ui.label({ text = "No managed shader selections.", maxLines = 2 })) end
+    panel.render(ui.column({ flexGrow = 1, padding = 14, gap = 12 }, {
+      supportHeader("Active selections"),
+      ui.scroll({ flexGrow = 1, gap = 12 }, content),
+      ui.label({ text = status.message or "", maxLines = 4, color = status.ok == false and "error" or "on_surface" }),
+      ui.row({ gap = 8 }, {
+        ui.button({ text = "Undo", onClick = "undo", enabled = status.can_undo == true and not status.busy and not status.pending }),
+        ui.button({ text = "Restore original", onClick = "restore", enabled = status.can_restore == true and not status.busy and not status.pending }),
+        ui.button({ text = "Recover", onClick = "recover", visible = status.pending == true, enabled = not status.busy }),
+      }),
+    }))
+    return
+  end
   if supportView == "settings" then
     panel.render(ui.column({ flexGrow = 1, padding = 14, gap = 16 }, {
       supportHeader("Settings"),
@@ -396,6 +410,7 @@ end
 
 render = function()
   if not opened then return end
+  previewWanted = {}
   if supportView then renderSupport(); return end
   local effect = selection()
   local family = familySelection()
@@ -416,12 +431,14 @@ render = function()
     ui.button({ key = "back", glyph = "arrow-left", tooltip = "Back", onClick = "browse", visible = not browsing or familyId ~= nil, enabled = ready, variant = "ghost" }),
     ui.label({ key = "heading", text = galleryMode == "families" and "Families" or "Shaders", fontSize = 24, fontWeight = "bold", flexGrow = 1 }),
     ui.button({ key = "gallery-mode", text = galleryMode == "families" and "All shaders" or "Families", onClick = "toggleGallery", visible = browsing and familyId == nil, enabled = ready, variant = "ghost" }),
+    ui.button({ key = "active", text = "Active", onClick = "activeSelections", enabled = ready, variant = "ghost" }),
     ui.button({ key = "refresh", glyph = "refresh", tooltip = "Refresh catalogue", onClick = "refresh", enabled = ready, variant = "ghost" }),
     ui.button({ key = "settings", glyph = "settings", tooltip = "Settings", onClick = "settings", variant = "ghost" }),
     ui.button({ key = "close", glyph = "x", tooltip = "Close", onClick = "close", variant = "ghost" }),
   }) }
-  local online = noctalia.getConfig("source_mode") ~= "local"
-  local sourceLabel = online and "Online · Noctalia community" or "Local development"
+  local mode = catalogue.mode or noctalia.getConfig("source_mode") or "online"
+  local online = mode == "online"
+  local sourceLabel = online and "Community catalogue" or (mode == "snapshot" and "Saved snapshot" or "Local development")
   if online and catalogue.offline then sourceLabel = "Offline · Saved community catalogue" end
   table.insert(root, ui.row({ key = "catalogue-source", gap = 8, align = "center" }, {
     ui.label({ text = sourceLabel, fontSize = 12, color = "on_surface/0.7", flexGrow = 1 }),
@@ -452,7 +469,7 @@ render = function()
     }
     for _, id in ipairs(effect.families or {}) do
       local familyName = id
-      for _, entry in ipairs(catalogue.families or {}) do if entry.id == id then familyName = entry.name; break end end
+      if model.families[id] then familyName = model.families[id].name end
       table.insert(content, ui.button({ text = "Explore " .. familyName .. " family", variant = "ghost", onClick = function() openFamily(id) end }))
     end
     if not recipeReady then table.insert(content, ui.label({ text = #uses == 0 and "Included with another shader." or "This shader needs manual setup.", maxLines = 2 })) end
@@ -470,7 +487,8 @@ render = function()
     local readyFamily = familyReady(family)
     table.insert(root, ui.row({ key = "family-apply", gap = 10, align = "center" }, {
       ui.label({ text = readyFamily and "Your choices apply together." or "Choose a shader or Keep current for each use.", fontSize = 13, maxLines = 2, flexGrow = 1 }),
-      ui.button({ key = "apply-family", text = "Apply family", variant = "primary", onClick = "applyFamily", enabled = ready and readyFamily and not status.pending }),
+      ui.button({ text = "Review", onClick = "reviewFamily", enabled = ready and readyFamily and not status.pending }),
+      ui.button({ key = "apply-family", text = "Apply family", variant = "primary", onClick = status.plan_token and status.family_id == familyId and "apply" or "applyFamily", enabled = ready and readyFamily and not status.pending }),
     }))
   elseif not browsing then
     table.insert(root, ui.row({ key = "destination", gap = 10, align = "center" }, {
@@ -487,6 +505,7 @@ render = function()
   }))
   end
   panel.render(ui.column({ flexGrow = 1, padding = 14, gap = 12 }, root))
+  if #previewWanted > 0 then noctalia.state.set("preview_request", { ids = previewWanted }) end
 end
 
 noctalia.state.watch("status", function(value)
@@ -508,8 +527,20 @@ noctalia.state.watch("status", function(value)
 end)
 noctalia.state.watch("catalogue", function(value)
   catalogue = type(value) == "table" and value or {}
+  model = catalogueModel.index(catalogue)
+  previewAttempted = {}
   familyChoices = {}
   if tag ~= "" and not contains(allTags(), tag) then tag = "" end
+  render()
+end)
+noctalia.state.watch("catalogue_status", function(value)
+  catalogueStatus = type(value) == "table" and value or {}
+  render()
+end)
+noctalia.state.watch("previews", function(value)
+  for id, preview in pairs(type(value) == "table" and value or {}) do
+    if model.effects[id] then model.effects[id].local_preview = preview end
+  end
   render()
 end)
 noctalia.state.watch("diagnostics", function(value)
@@ -520,8 +551,13 @@ function onOpen(_context)
   opened = true
   status = noctalia.state.get("status") or status
   catalogue = noctalia.state.get("catalogue") or catalogue
+  catalogueStatus = noctalia.state.get("catalogue_status") or catalogueStatus
+  model = catalogueModel.index(catalogue)
+  for id, preview in pairs(noctalia.state.get("previews") or {}) do
+    if model.effects[id] then model.effects[id].local_preview = preview end
+  end
   render()
-  if not status.busy then request(supportView == "diagnostics" and "diagnostics" or "catalogue", nil) end
+  if not status.busy then request(supportView == "diagnostics" and "diagnostics" or "status", nil) end
 end
 function browse()
   if browsing and familyId then familyId = nil end
@@ -563,14 +599,20 @@ function playRecording()
   if type(path) == "string" then noctalia.runAsync({ "xdg-open", path }) end
 end
 function onClose() opened = false end
-function compareLocal() comparing = not comparing; render() end
+function compareLocal()
+  comparing = not comparing
+  if comparing and not status.busy then request("prepare", nil, true) end
+  render()
+end
 function applyFamily() request("choose-family", nil) end
 function apply() request("apply", status.plan_token) end
 function chooseShader() request("choose", nil) end
 function undo() request("undo", nil) end
 function restore() request("restore", nil) end
 function recover() request("recover", nil) end
-function refresh() request("catalogue", nil) end
+function refresh() request("refresh", nil) end
+function activeSelections() supportView = "active"; render() end
+function reviewFamily() request("prepare-family", nil) end
 function settings() supportView = "settings"; supportNotice = nil; render() end
 function pluginSettings() noctalia.openSettings() end
 function troubleshoot()

@@ -4,5 +4,5 @@ barWidget.setText("")
 barWidget.setTooltip(noctalia.tr("title"))
 
 function onClick()
-  noctalia.togglePanel("barrulus/umbriel-shaders:shaders")
+  noctalia.togglePanel("barrulus/umbriel-shaders-native:shaders")
 end
