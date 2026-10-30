@@ -41,10 +41,19 @@ function M.equal(a, b)
   return true
 end
 function M.json(value, depth)
+  -- Catalogue fingerprints traverse thousands of values. Yield during traversal,
+  -- before hashing, so one serialization cannot exhaust the host callback budget.
+  A.checkpoint()
   depth = depth or 0
-  assert(depth <= 32, noctalia.tr("util.document_nesting_exceeds_limit"))
+  if depth > 32 then
+    error(noctalia.tr("util.document_nesting_exceeds_limit"))
+  end
   if type(value) ~= "table" then
-    return (assert(noctalia.json.encode(value), noctalia.tr("util.cannot_encode_value")))
+    local encoded = noctalia.json.encode(value)
+    if not encoded then
+      error(noctalia.tr("util.cannot_encode_value"))
+    end
+    return encoded
   end
   local out = {}
   if #value > 0 then
@@ -54,7 +63,9 @@ function M.json(value, depth)
     return "[" .. table.concat(out, ",") .. "]"
   end
   for _, k in ipairs(M.keys(value)) do
-    assert(type(k) == "string", noctalia.tr("util.invalid_document_key"))
+    if type(k) ~= "string" then
+      error(noctalia.tr("util.invalid_document_key"))
+    end
     table.insert(out, M.json(k) .. ":" .. M.json(value[k], depth + 1))
   end
   return "{" .. table.concat(out, ",") .. "}"

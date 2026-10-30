@@ -34,9 +34,21 @@ The prepared package passes the official manifest validator at repository revisi
 export with the proposed `noctalia/umbriel-shaders` ID also passes both checks;
 no upstream repository was modified.
 
-The fixture suites pass 115 assertions. The real-checkout check covers 142 effects,
+The fixture suites pass 120 assertions. The real-checkout check covers 142 effects,
 10 families and 148 activation bindings, including a border with an overlay.
 First-party Luau passes StyLua using the repository configuration.
+
+## Startup CPU budget regression
+
+The JSON budget fixture charges host calls deterministic time and enforces a
+25 ms callback limit while four catalogue-sized serializations run concurrently.
+It checks that serialization yields, completes, and preserves canonical output.
+The test fails on the implementation before the startup fix.
+
+A temporary plugin in the running Noctalia host reproduced the `update` CPU-budget
+error with the 325,630-byte cached online index. With yielding JSON serialization,
+the same startup loaded 136 published effects and 10 families in approximately
+three seconds. The probe read a separate cache copy and did not apply shaders.
 
 ## Live verification of the initial Luau release
 
