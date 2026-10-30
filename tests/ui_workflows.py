@@ -5,7 +5,7 @@ import subprocess
 import sys
 import tempfile
 
-plugin = Path(__file__).resolve().parents[1] / 'umbriel-shaders-native'
+plugin = Path(__file__).resolve().parents[1] / 'umbriel-shaders'
 host = r'''
 local checks = 0
 local function check(value, message)
@@ -24,6 +24,7 @@ local function resetHost()
       end,
       watch = function(key, callback) watchers[key] = callback end,
     },
+    setUpdateInterval = function() end,
     pluginDataDir = function() return "/fixture/data" end,
     pluginDir = function() return "/fixture/plugin" end,
     getConfig = function(key) return config[key] end,
@@ -59,7 +60,7 @@ local function node(key)
 end
 local function complete(index, value, timedOut)
   local item = table.remove(pending, index)
-  item.callback({ stdout = value, exitCode = 0, timedOut = timedOut or false, stdoutTruncated = false })
+  item.callback(type(value) == "table" and value or { ok = false, protocol_version = 1, message = "Invalid response" })
 end
 resetHost()
 local effects = {}
@@ -134,15 +135,15 @@ print("PASS panel search, pagination, visible previews, family choices, withdraw
 resetHost()
 '''
 service_checks = r'''
-check(#pending == 1 and pending[1].args[#pending[1].args] == "catalogue", "Service startup performed a network refresh")
+check(#pending == 1 and pending[1].args.action == "catalogue", "Service startup performed a network refresh")
 complete(1, { protocol_version = 1, ok = true, catalogue = { offset = 0, next_offset = 1, fingerprint = "same", effects = { { id = "a" } }, families = {} } })
-check(#pending == 1 and pending[1].args[#pending[1].args] == "catalogue", "Catalogue pagination was not continued")
+check(#pending == 1 and pending[1].args.action == "catalogue", "Catalogue pagination was not continued")
 complete(1, { protocol_version = 1, ok = true, catalogue = { offset = 1, fingerprint = "same", effects = { { id = "b" } }, families = {} } })
 check(#values.catalogue.effects == 2 and not values.status.busy, "Catalogue pages were not combined")
 noctalia.state.set("preview_request", { ids = { "p1", "p2", "p3", "p4", "p5", "p6" } })
 check(#pending == 4, "Preview requests did not respect the four-download concurrency limit")
 noctalia.state.set("request", { action = "status" })
-check(#pending == 5 and pending[5].args[#pending[5].args] == "status", "Four previews blocked a foreground status request")
+check(#pending == 5 and pending[5].args.action == "status", "Four previews blocked a foreground status request")
 complete(5, { protocol_version = 1, ok = true, managed = false })
 complete(2, { protocol_version = 1, ok = true, previews = { p2 = { image = "/p2.png" } } })
 check(values.previews.p2.image == "/p2.png" and values.previews.p1 == nil and #pending == 4,
@@ -154,7 +155,7 @@ check(values.previews.p6.image == "/p6.png" and #pending == 1,
   "A slow first preview blocked the rest of the visible gallery")
 complete(1, { protocol_version = 1, ok = true, previews = { p1 = { image = "/p1.png" } } })
 noctalia.state.set("preview_request", { ids = { "a", "a" } })
-check(#pending == 1 and pending[1].args[#pending[1].args] == "previews", "Visible previews were not requested")
+check(#pending == 1 and pending[1].args.action == "previews", "Visible previews were not requested")
 noctalia.state.set("preview_request", { ids = { "a" } })
 check(#pending == 1, "An already requested preview was downloaded repeatedly")
 noctalia.state.set("request", { action = "status" })
@@ -163,37 +164,36 @@ onConfigChanged()
 complete(1, { protocol_version = 1, ok = true, previews = { a = { image = "/stale.png" } } })
 check(values.previews.a == nil, "A preview from an old source was published after settings changed")
 complete(1, { protocol_version = 1, ok = true, managed = false })
-check(#pending == 1 and pending[1].args[#pending[1].args] == "catalogue", "Settings change did not queue a catalogue reload")
+check(#pending == 1 and pending[1].args.action == "catalogue", "Settings change did not queue a catalogue reload")
 complete(1, "invalid JSON")
-check(values.status.ok == false and not values.status.busy, "Malformed helper output was accepted")
+check(values.status.ok == false and not values.status.busy, "Malformed backend output was accepted")
 check(values.catalogue_status.error ~= nil and not values.catalogue_status.loading, "Catalogue failures were not saved independently")
 local catalogueError = values.catalogue_status.error
 noctalia.state.set("request", { action = "status" })
 complete(1, { protocol_version = 1, ok = true, managed = false })
 check(values.catalogue_status.error == catalogueError, "Live status overwrote the failed catalogue result")
 noctalia.state.set("request", { action = "prepare", effect = "cursor/glow" })
-check(#pending == 0, "A selection without a target use reached the helper")
+check(#pending == 0, "A selection without a target use reached the backend")
 noctalia.state.set("request", { action = "refresh" })
-check(#pending == 1 and pending[1].args[#pending[1].args] == "refresh", "Explicit refresh did not reach the helper")
+check(#pending == 1 and pending[1].args.action == "refresh", "Explicit refresh did not reach the backend")
 check(values.catalogue_status.loading and not values.catalogue_status.error, "Retry did not clear the previous catalogue error")
 complete(1, { protocol_version = 1, ok = true, catalogue = { effects = {}, families = {}, fingerprint = "retry" } })
 check(not values.catalogue_status.loading and not values.catalogue_status.error, "Successful retry left the gallery loading or failed")
 noctalia.state.set("request", { action = "prepare", effect = "cursor/glow", slot = "effects.cursor", compare = true })
-check(table.find(pending[1].args, "--compare-local") ~= nil, "Optional comparison did not reach the native helper")
+check(pending[1].args.request.compare == true, "Optional comparison did not reach the backend")
 complete(1, { protocol_version = 1, ok = true })
-onExit(0, "reload")
-check(#pending == 0, "Script reload restored the desktop unexpectedly")
-onExit(0, "disable")
-check(#pending == 1 and pending[1].args[1] == "/fixture/data/native-v1/recovery" and pending[1].args[4] == "--wait-lock",
-  "Disable did not use the persistent recovery helper and operation lock")
-print("PASS service cached startup, catalogue pages, preview deduplication, source-change races and disable recovery")
+check(onExit == nil, "Stopping the plugin must not launch restoration")
+print("PASS service cached startup, catalogue pages, progressive previews, source-change races, persistent selections")
 print(tostring(checks) .. " UI workflow assertions passed")
 '''
 source = host + '\nlocal catalogueModule = (function()\n' + (plugin / 'lib/catalogue.luau').read_text() + '\nend)()\n'
-source += 'function require(_path) return catalogueModule end\n'
+source += '''function require(path)
+ if path == "./lib/catalogue.luau" then return catalogueModule end
+ return { new = function() return { update = function() end, run = noctalia.runAsync } end }
+end\n'''
 source += (plugin / 'panel.luau').read_text() + panel_checks
 source += (plugin / 'service.luau').read_text() + service_checks
-with tempfile.TemporaryDirectory(prefix='native-ui-') as directory:
+with tempfile.TemporaryDirectory(prefix='shaders-ui-') as directory:
     script = Path(directory) / 'workflows.luau'
     script.write_text(source)
     subprocess.run([sys.argv[1], script], check=True, timeout=20)

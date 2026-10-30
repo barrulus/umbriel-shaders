@@ -1,0 +1,16 @@
+{
+  "title": "Umbriel Shaders",
+  "catalogue.label": "Saved catalogue",
+  "catalogue.description": "Published catalogue.json for a matching saved asset snapshot.",
+  "assets.label": "Shader asset snapshot",
+  "assets.description": "Folder containing files matching the saved catalogue. Selected assets are verified before installation.",
+  "base.label": "Original Umbriel configuration",
+  "base.description": "Optional absolute original configuration path. Restore managed effects before changing it.",
+  "source.label": "Catalogue source",
+  "source.description": "Browse saved metadata immediately. Refresh downloads updates; previews load as needed.",
+  "source.online": "Online community catalogue",
+  "source.local": "Local shader checkout",
+  "source.snapshot": "Saved snapshot",
+  "checkout.label": "Community shader checkout",
+  "checkout.description": "Authoring files are indexed locally. Local experiments are included."
+}

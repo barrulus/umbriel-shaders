@@ -1,9 +1,9 @@
 [[plugin]]
-id = "barrulus/umbriel-shaders-native"
+id = "barrulus/umbriel-shaders"
 name = "Umbriel Shaders"
-version = "0.2.0"
+version = "0.5.0"
 plugin_api = 24
 author = "Barrulus"
 license = "MIT"
 description = "Browse community shaders, apply coordinated selections, undo and restore."
-dependencies = ["umbriel-shaders-native", "umbriel"]
+dependencies = ["umbriel"]

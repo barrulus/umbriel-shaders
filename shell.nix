@@ -1,4 +1,5 @@
+# Development tools only. The installed plugin needs Noctalia and Umbriel.
 { pkgs ? import <nixpkgs> {} }:
 pkgs.mkShell {
-  packages = with pkgs; [ cmake ninja pkg-config nlohmann_json tomlplusplus openssl curl python3 ];
+  packages = with pkgs; [ python3 cmake ninja ];
 }
