@@ -65,6 +65,7 @@ end
 function F.write(path,raw) mkdir(path:match('^(.*)/[^/]+$') or '/'); F.files[path]=raw end
 function F.check(v,message) F.checks+=1; assert(v,message) end
 noctalia={
+  tr=fixtureTranslate, trp=fixturePlural,
   setUpdateInterval=function() end,
   json={encode=encode,decode=decode},nowMs=function() return F.time end,
   getenv=function(key) return ({HOME='/home/test',XDG_RUNTIME_DIR='/run',WAYLAND_DISPLAY='test'})[key] end,

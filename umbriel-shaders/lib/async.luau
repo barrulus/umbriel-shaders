@@ -5,7 +5,9 @@ local queue = {}
 local active = {}
 local function resume(thread, ...)
   local job = active[thread]
-  if not job then return end
+  if not job then
+    return
+  end
   job.started = os.clock()
   local result = table.pack(coroutine.resume(thread, ...))
   if not result[1] or coroutine.status(thread) == "dead" then
@@ -24,12 +26,20 @@ function M.await(start)
   repeat
     local synchronous, received = true, nil
     local accepted = start(function(...)
-      if synchronous then received = table.pack(...) else resume(thread, ...) end
+      if synchronous then
+        received = table.pack(...)
+      else
+        resume(thread, ...)
+      end
     end)
     synchronous = false
-    if received then return table.unpack(received, 1, received.n) end
-    if accepted ~= false then return coroutine.yield() end
-    assert(noctalia.nowMs() < deadline, "Host operation queue remained full")
+    if received then
+      return table.unpack(received, 1, received.n)
+    end
+    if accepted ~= false then
+      return coroutine.yield()
+    end
+    assert(noctalia.nowMs() < deadline, noctalia.tr("async.host_operation_queue_remained_full"))
     M.pause()
   until false
 end
@@ -40,12 +50,18 @@ function M.pause()
 end
 function M.checkpoint()
   local job = active[coroutine.running()]
-  if job and os.clock() - job.started > 0.003 then M.pause() end
+  if job and os.clock() - job.started > 0.003 then
+    M.pause()
+  end
 end
 function M.update()
   local ready = queue
   queue = {}
-  for _, thread in ipairs(ready) do resume(thread) end
-  if #queue == 0 then noctalia.setUpdateInterval(1000) end
+  for _, thread in ipairs(ready) do
+    resume(thread)
+  end
+  if #queue == 0 then
+    noctalia.setUpdateInterval(1000)
+  end
 end
 return M

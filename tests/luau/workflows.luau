@@ -11,12 +11,16 @@ members=["cursor/cursor-fixture","border/border-fixture","window/window-fixture"
 "effects.cursor"="cursor/cursor-fixture"
 "animation.windows_in"="animation/animation-fixture"
 ]])
+F.session=1.0009999
 local base=F.files['/base.toml']
 local catalogue=F.call('catalogue')
 F.check(#catalogue.catalogue.effects==6 and #catalogue.catalogue.families==1,'Local catalogue generation')
 local plan=F.call('prepare',{effect='cursor/cursor-fixture',slot='effects.cursor'})
+F.check(plan.effect_id=='cursor/cursor-fixture' and plan.slot=='effects.cursor','Review lost its effect and destination')
 F.check(not plan.managed and #plan.changes==1,'Review changed live selection')
 local applied=F.call('apply',{token=plan.plan_token})
+F.session=1.0010001
+F.check(F.call('status').managed,'Timestamp jitter crossing a millisecond lost ownership')
 F.check(applied.managed and applied.can_undo and applied.cursor=='cursor-fixture','Apply failed')
 F.check(not F.call('undo').managed and F.active=='/base.toml','Undo initial application')
 F.call('choose',{effect='cursor/cursor-fixture',slot='effects.cursor'})
@@ -58,7 +62,8 @@ F.backend=require('lib/backend.luau').new('/state')
 F.call('recover',nil,false)
 F.time+=8000
 F.check(not F.call('recover').managed,'Recover interrupted callback')
-F.call('choose',{effect='cursor/cursor-fixture',slot='effects.cursor'})
+local reused=F.call('choose',{effect='cursor/cursor-fixture',slot='effects.cursor'})
+F.check(reused.used_local_copy,'Local-copy status was lost after application')
 local active=F.active
 F.session+=0.0000002
 F.backend=require('lib/backend.luau').new('/state')

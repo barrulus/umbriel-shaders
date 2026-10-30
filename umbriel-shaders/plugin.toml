@@ -1,12 +1,13 @@
 id = "barrulus/umbriel-shaders"
 name = "Umbriel Shaders"
-version = "0.5.0"
-plugin_api = 24
+version = "0.5.1"
+plugin_api = 43
 author = "Barrulus"
 license = "MIT"
 icon = "sparkles"
 description = "Browse community shaders, apply coordinated selections, undo and restore."
 dependencies = ["umbriel"]
+tags = ["umbriel", "theming", "panel", "utility"]
 
 [[setting]]
 key = "source_mode"

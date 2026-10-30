@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 import subprocess
 import tempfile
+from translations import translation_fixture
 
 ROOT = Path(__file__).resolve().parents[1]
 PLUGIN = ROOT / 'umbriel-shaders'
@@ -18,7 +19,7 @@ def bundle(entry):
             return f'require({target!r})'
         source = re.sub(r'require\("([^\"]+)"\)', dependency, path.read_text())
         loaders.append(f'loaders[{name!r}] = function()\n{source}\nend\n')
-    return ('local loaders, modules = {}, {}\nlocal require\n'
+    return (translation_fixture() + 'local loaders, modules = {}, {}\nlocal require\n'
             'require = function(name)\n if modules[name] == nil then modules[name] = assert(loaders[name], name)() end\n return modules[name]\nend\n'
             + '\n'.join(loaders) + '\n' + entry)
 

@@ -4,6 +4,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from translations import translation_fixture
 
 plugin = Path(__file__).resolve().parents[1] / 'umbriel-shaders'
 host = r'''
@@ -16,6 +17,7 @@ local values, watchers, pending, config, tree
 local function resetHost()
   values, watchers, pending, config = {}, {}, {}, { source_mode = "online" }
   noctalia = {
+    tr = fixtureTranslate, trp = fixturePlural,
     state = {
       get = function(key) return values[key] end,
       set = function(key, value)
@@ -86,11 +88,22 @@ check(values.request.action == "status", "Opening the panel triggered a catalogu
 check(#values.preview_request.ids == 24, "Visible preview request was not bounded to 24")
 check(#nodes(function(item) return item.props.key and string.match(item.props.key, "^cursor/") ~= nil end) == 20,
   "Initial gallery did not paginate at 24 effects")
+translationOverrides["panel.show_more"] = "Voir {visible} / {total}"
+translationOverrides["panel.shader_count.other"] = "{count} effets"
+onOpen()
+check(node("show-more").props.text == "Voir 24 / 30", "Pagination did not use translated substitutions")
+check(#nodes(function(item) return item.props.text == "30 effets" end) == 1, "Gallery did not use translated plurals")
+translationOverrides = {}
 showMore()
 check(#values.preview_request.ids == 6, "Show more did not fetch only newly visible previews")
 search("Effect 30")
 check(node("cursor/effect-30") ~= nil and node("cursor/glow") == nil, "Search did not filter catalogue records")
 clearFilters()
+node("cursor/glow").props.onClick()
+toggleDetails()
+noctalia.state.set("status", { ok = true, managed = true, selections = { ["effects.cursor"] = "cursor/withdrawn" }, can_restore = true, plan_token = "review-token", effect_id = "cursor/glow", slot = "effects.cursor", changes = {} })
+check(node("apply").props.onClick == "apply", "Reviewed shader was not connected to its Apply token")
+browse()
 toggleGallery()
 node("family-coordinated").props.onClick()
 local choice = node("family-choice-effects.cursor")
@@ -186,7 +199,7 @@ check(onExit == nil, "Stopping the plugin must not launch restoration")
 print("PASS service cached startup, catalogue pages, progressive previews, source-change races, persistent selections")
 print(tostring(checks) .. " UI workflow assertions passed")
 '''
-source = host + '\nlocal catalogueModule = (function()\n' + (plugin / 'lib/catalogue.luau').read_text() + '\nend)()\n'
+source = translation_fixture() + host + '\nlocal catalogueModule = (function()\n' + (plugin / 'lib/catalogue.luau').read_text() + '\nend)()\n'
 source += '''function require(path)
  if path == "./lib/catalogue.luau" then return catalogueModule end
  return { new = function() return { update = function() end, run = noctalia.runAsync } end }
