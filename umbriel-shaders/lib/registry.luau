@@ -62,7 +62,10 @@ function M.validate(r, localMode)
         and record.bytes % 1 == 0
         and record.bytes >= 0
         and record.bytes <= (media[suffix] and 32 * U.limit or 256 * 1024)
-        and U.hex(record.sha256, 64),
+        and (
+          U.hex(record.sha256, 64)
+          or localMode and r.draft and media[suffix] and record.sha256 == false
+        ),
       noctalia.tr("registry.invalid_catalogue_file_metadata")
     )
     total += record.bytes
@@ -147,7 +150,11 @@ function M.validate(r, localMode)
     end
     local shaders, install = 0, {}
     for _, path in ipairs(e.install_files) do
-      assert(r.files[path], noctalia.tr("registry.missing_installation_asset"))
+      -- Only local display media can omit a checksum, never installation assets.
+      assert(
+        r.files[path] and U.hex(r.files[path].sha256, 64),
+        noctalia.tr("registry.missing_installation_asset")
+      )
       if path:match("%.glsl$") then
         shaders += 1
         assert(

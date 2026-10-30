@@ -143,6 +143,15 @@ check(string.find(node("catalogue-message").props.text, "Download timed out", 1,
 noctalia.state.set("catalogue", { effects = {}, families = {} })
 noctalia.state.set("catalogue_status", { loading = false })
 check(node("catalogue-message").props.text == "No families in this catalogue.", "A valid empty catalogue looked like it was still loading")
+for _, effect in ipairs(effects) do effect.local_preview = { image = "/local/" .. effect.id .. ".png" } end
+values.preview_request = nil
+noctalia.state.set("catalogue", { mode = "local", effects = effects, families = { family } })
+check(values.preview_request == nil, "Family gallery queued already-available local previews")
+node("family-coordinated").props.onClick()
+check(values.preview_request == nil, "Opening a local family queued preview work")
+browse()
+toggleGallery()
+check(values.preview_request == nil, "Local shader gallery queued preview work")
 onClose()
 print("PASS panel search, pagination, visible previews, family choices, withdrawn removal and recovery controls")
 resetHost()

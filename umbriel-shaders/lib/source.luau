@@ -45,7 +45,7 @@ function M.open(root, refresh)
     self.registry = self.registry or R.validate(U.decode(U.read(path, 4 * U.limit)), false)
   elseif mode == "local" then
     self.assets = U.normalize(noctalia.expandPath(noctalia.getConfig("source_root") or ""))
-    self.registry = Local.build(self.assets, cache, refresh)
+    self.registry, self.fingerprint = Local.build(self.assets, cache, refresh)
   else
     assert(mode == "snapshot", noctalia.tr("source.invalid_catalogue_source_mode"))
     local index = noctalia.expandPath(noctalia.getConfig("catalogue_index") or "")
@@ -97,6 +97,7 @@ end
 function Source:browse(offset)
   offset = offset or 0
   local r = self.registry
+  self.fingerprint = self.fingerprint or U.hash(U.json(r))
   local all = {}
   for _, effect in ipairs(r.effects) do
     table.insert(all, { effect = true, record = effect })
@@ -113,7 +114,7 @@ function Source:browse(offset)
     offset = offset,
     total_effects = #r.effects,
     total_families = #r.families,
-    fingerprint = U.hash(U.json(r)),
+    fingerprint = self.fingerprint,
     features = r.feature_definitions,
     revision = r.source.revision,
   }
@@ -159,7 +160,10 @@ function Source:previews(ids)
     local ok, err = pcall(function()
       local e = S.find(self.registry.effects, id)
       if e.preview.image then
-        self:bytes(e.preview.image)
+        -- Local preview paths are display-only and already exposed by browse().
+        if self.mode ~= "local" then
+          self:bytes(e.preview.image)
+        end
         record.image = self.mode == "online" and self:object(e.preview.image)
           or U.path(self.assets, e.preview.image)
       end

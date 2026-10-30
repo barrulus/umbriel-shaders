@@ -34,8 +34,8 @@ The prepared package passes the official manifest validator at repository revisi
 export with the proposed `noctalia/umbriel-shaders` ID also passes both checks;
 no upstream repository was modified.
 
-The fixture suites pass 120 assertions. The real-checkout check covers 142 effects,
-10 families and 148 activation bindings, including a border with an overlay.
+The fixture suites pass 142 assertions. The real-checkout check covers 148 effects,
+10 families and 154 activation bindings, including a border with an overlay.
 First-party Luau passes StyLua using the repository configuration.
 
 ## Startup CPU budget regression
@@ -49,6 +49,20 @@ A temporary plugin in the running Noctalia host reproduced the `update` CPU-budg
 error with the 325,630-byte cached online index. With yielding JSON serialization,
 the same startup loaded 136 published effects and 10 families in approximately
 three seconds. The probe read a separate cache copy and did not apply shaders.
+
+## Local catalogue performance
+
+The local-performance fixture rejects any attempt to read preview media while
+indexing or navigating. It checks timestamp jitter, persistent and in-memory cache
+reuse, edit/removal invalidation, forced refresh, and selected-asset verification.
+Published catalogues still require SHA-256 hashes for every asset. Only local
+preview media may omit hashes; installable shader/config/notice files may not.
+
+With the actual local checkout and Noctalia host, the old loader was still indexing
+after 40 seconds and had read 18.7 MB of preview media. The revised loader indexed
+148 effects and 10 families in 3.2 seconds, reopened its cache in 1.1 seconds, and
+resolved family previews in under 1 ms. It read no preview media. These timings are
+for the backend on this machine; they exclude the shell's image decoding/rendering.
 
 ## Live verification of the initial Luau release
 

@@ -55,7 +55,8 @@ same plugin ID to restore later. Restore and recovery do not need the catalogue.
   saved snapshot. Online mode reuses the saved index; **Refresh** checks for
   updates. Downloaded shader assets are checked against their SHA-256 hashes.
 - **Community shader checkout** — source directory for local authoring metadata
-  and experiments, shown in local mode.
+  and experiments, shown in local mode. Previews load directly from the checkout.
+  Use **Refresh** after authoring edits; preparing a selection rechecks the files.
 - **Saved catalogue** and **Shader asset snapshot** — matching published index
   and assets directory, shown in snapshot mode.
 - **Original Umbriel configuration** — defaults to

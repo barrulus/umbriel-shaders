@@ -42,15 +42,43 @@ function M.build(root, cache, refresh)
     end
   end
   scan("", 0)
-  local signature = U.hash("luau-local-v1:" .. U.json(stamps))
   local directory = U.path(cache, U.hash(root):sub(1, 16))
-  if
-    not refresh
-    and U.exists(directory .. "/signature")
-    and U.read(directory .. "/signature") == signature
-    and U.exists(directory .. "/catalogue.json")
-  then
-    return R.validate(U.decode(U.read(directory .. "/catalogue.json", 4 * U.limit)), true)
+  local stampPath = directory .. "/stamps-v2.json"
+  local function unchanged(previous)
+    if
+      type(previous) ~= "table"
+      or type(previous.files) ~= "table"
+      or not U.hex(previous.fingerprint, 32)
+    then
+      return false
+    end
+    for path, stamp in pairs(stamps) do
+      local old = previous.files[path]
+      -- Clock conversion jitter is not an edit. Exact timestamp hashes made
+      -- otherwise unchanged checkouts miss their cache on every scan.
+      if
+        type(old) ~= "table"
+        or type(old[2]) ~= "number"
+        or old[1] ~= stamp[1]
+        or math.abs(old[2] - stamp[2]) >= 0.001
+      then
+        return false
+      end
+      A.checkpoint()
+    end
+    for path in pairs(previous.files) do
+      if not stamps[path] then
+        return false
+      end
+    end
+    return true
+  end
+  if not refresh and U.exists(stampPath) and U.exists(directory .. "/catalogue.json") then
+    local ok, previous = pcall(U.load, stampPath)
+    if ok and unchanged(previous) then
+      return R.validate(U.decode(U.read(directory .. "/catalogue.json", 4 * U.limit)), true),
+        previous.fingerprint
+    end
   end
   local prefix = ""
   if #metadata == 0 then
@@ -74,6 +102,13 @@ function M.build(root, cache, refresh)
   }
   local files, effects, definitions = registry.files, {}, {}
   local total = 0
+  local contents = {}
+  local function read(name)
+    if not contents[name] then
+      contents[name] = U.read(U.path(root, name), 256 * 1024)
+    end
+    return contents[name]
+  end
   local function file(name)
     if not files[name] then
       local media = name:match("%.(png)$")
@@ -81,10 +116,24 @@ function M.build(root, cache, refresh)
         or name:match("%.(gif)$")
         or name:match("%.(mp4)$")
         or name:match("%.(webm)$")
-      local raw = U.read(U.path(root, name), media and 32 * U.limit or 256 * 1024)
-      total += #raw
+      if media then
+        -- Display-only local media need no download checksum. Do not read whole
+        -- GIFs and images merely to list their authoring metadata.
+        local info = assert(
+          noctalia.fileInfo(U.path(root, name)),
+          noctalia.tr("local_source.local_file_disappeared")
+        )
+        assert(
+          not info.isDir and info.size <= 32 * U.limit,
+          noctalia.tr("local_source.local_assets_exceed_limit")
+        )
+        files[name] = { bytes = info.size, sha256 = false }
+      else
+        local raw = read(name)
+        files[name] = { bytes = #raw, sha256 = U.hash(raw) }
+      end
+      total += files[name].bytes
       assert(total <= 512 * U.limit, noctalia.tr("local_source.local_assets_exceed_limit"))
-      files[name] = { bytes = #raw, sha256 = U.hash(raw) }
     end
     return name
   end
@@ -94,7 +143,7 @@ function M.build(root, cache, refresh)
     end
   end
   local function parse(name)
-    return U.toml(U.read(U.path(root, name), 256 * 1024))
+    return U.toml(read(name))
   end
   for _, path in ipairs(metadata) do
     local id = path:sub(#prefix + 1, -15)
@@ -346,7 +395,8 @@ function M.build(root, cache, refresh)
   local raw = U.json(registry)
   assert(#raw <= 4 * U.limit, noctalia.tr("local_source.local_index_exceeds_limit"))
   U.atomic(directory .. "/catalogue.json", raw)
-  U.atomic(directory .. "/signature", signature)
-  return registry
+  local fingerprint = U.token()
+  U.save(stampPath, { files = stamps, fingerprint = fingerprint })
+  return registry, fingerprint
 end
 return M

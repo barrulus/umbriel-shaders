@@ -108,13 +108,16 @@ local function diagnostic(root, peer, liveError)
 end
 function M.new(root)
   local cached, cacheKey
-  local function open(refresh)
+  local function open(refresh, recheck)
     local key = U.json({
       noctalia.getConfig("source_mode"),
       noctalia.getConfig("source_root"),
       noctalia.getConfig("catalogue_index"),
       noctalia.getConfig("assets_root"),
     })
+    if cached and cacheKey == key and not refresh and not recheck then
+      return cached
+    end
     cached = Source.open(root, refresh)
     cacheKey = key
     return cached
@@ -202,7 +205,9 @@ function M.new(root)
                 Source.Source
               )
             else
-              catalogue = open(false)
+              -- Recheck authoring files before preparing a selection. Browsing
+              -- and previews reuse this snapshot until Refresh or settings change.
+              catalogue = open(false, true)
             end
             local requested, family
             if action == "prepare-family" or action == "choose-family" then

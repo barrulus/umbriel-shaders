@@ -8,6 +8,8 @@ F.write('/assets/cursor/glow/preview.png','fixture image')
 local localSource=F.run(function() return Source.open('/state',false) end)
 local registry=U.copy(localSource.registry)
 registry.draft=false; registry.source.revision=string.rep('a',40)
+-- Published catalogues require checksums even for media; local display records do not.
+for name,record in pairs(registry.files) do record.sha256=U.hash(F.files['/assets/'..name]) end
 local origin='https://raw.githubusercontent.com/noctalia-dev/community-umbriel-shaders/'
 F.http[origin..'catalogue/catalogue.json']=U.json(registry)
 for name in pairs(registry.files) do F.http[origin..registry.source.revision..'/'..name]=F.files['/assets/'..name] end

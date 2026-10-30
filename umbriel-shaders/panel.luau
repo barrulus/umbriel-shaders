@@ -145,11 +145,16 @@ local function tagChips(effect, compact)
   return ui.column({ gap = 6 }, rows)
 end
 local function preview(effect, width, height)
-  if model.effects[effect.id] and not previewAttempted[effect.id] and #previewWanted < 24 then
+  local localPreview = effect.local_preview or {}
+  if
+    model.effects[effect.id]
+    and not (catalogue.mode == "local" and localPreview.image)
+    and not previewAttempted[effect.id]
+    and #previewWanted < 24
+  then
     previewAttempted[effect.id] = true
     table.insert(previewWanted, effect.id)
   end
-  local localPreview = effect.local_preview or {}
   local path = localPreview.image
   if type(path) == "string" and path ~= "" then
     return ui.image({
