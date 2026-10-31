@@ -34,7 +34,7 @@ The prepared package passes the official manifest validator at repository revisi
 export with the proposed `noctalia/umbriel-shaders` ID also passes both checks;
 no upstream repository was modified.
 
-The fixture suites pass 142 assertions. The real-checkout check covers 148 effects,
+The fixture suites pass 189 assertions. The real-checkout check covers 148 effects,
 10 families and 154 activation bindings, including a border with an overlay.
 First-party Luau passes StyLua using the repository configuration.
 
@@ -63,6 +63,22 @@ after 40 seconds and had read 18.7 MB of preview media. The revised loader index
 148 effects and 10 families in 3.2 seconds, reopened its cache in 1.1 seconds, and
 resolved family previews in under 1 ms. It read no preview media. These timings are
 for the backend on this machine; they exclude the shell's image decoding/rendering.
+
+## Local Refresh regression
+
+The local-refresh fixture checks active shader and preset updates, retained family
+animation timing, external runtime selections, revision-specific Undo, no-change
+Refresh preserving Undo, and rollback after new GLSL fails compilation. It also
+covers pre-upgrade installations with manually edited shader files and stale
+fingerprints, rejects modified generated wrappers and edits after review, checks
+retired-asset cleanup, and exercises online preservation and offline removal/restore.
+The panel fixture checks preview identity changes and the local Refresh tooltip.
+
+In the live Noctalia/Umbriel session, local Refresh completed in 6.5 seconds. All
+seven installed shaders matched the checkout and compiled, while six selections
+and their activation settings stayed unchanged. The previous revision retained
+its manually patched files with valid rollback fingerprints; the original
+configuration stayed unchanged. No-change Refresh is covered by the fixture suite.
 
 ## Live verification of the initial Luau release
 

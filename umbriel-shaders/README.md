@@ -41,8 +41,15 @@ Add the bar widget or control-center shortcut, then open the browser.
   configuration while preserving unrelated runtime selections where possible.
 
 The plugin creates a separate configuration that includes your original file;
-it does not rewrite that file. Existing local presets take precedence, and
-refreshing the catalogue does not overwrite installed shader edits.
+it does not rewrite that file. Presets defined in your original configuration take
+precedence. Online and snapshot modes preserve installed shader edits.
+
+In local-checkout mode, **Refresh** also updates active shaders from the checkout,
+including their preset definitions and dependencies. It keeps your selected slots
+and activation settings, such as animation timing. Updated shaders must pass
+configuration validation and GPU compilation; a failed update restores the previous
+revision. **Undo** restores the previous shader files as well as the selection.
+Refreshing without active shader changes keeps the existing Undo history.
 
 **Selections remain active when you close, disable or uninstall the plugin.**
 Generated configurations and shader files remain in Noctalia's plugin data
@@ -56,7 +63,8 @@ same plugin ID to restore later. Restore and recovery do not need the catalogue.
   updates. Downloaded shader assets are checked against their SHA-256 hashes.
 - **Community shader checkout** — source directory for local authoring metadata
   and experiments, shown in local mode. Previews load directly from the checkout.
-  Use **Refresh** after authoring edits; preparing a selection rechecks the files.
+  Use **Refresh** after authoring edits to reload previews and update active shaders.
+  Applying a selection also uses the current checkout files.
 - **Saved catalogue** and **Shader asset snapshot** — matching published index
   and assets directory, shown in snapshot mode.
 - **Original Umbriel configuration** — defaults to

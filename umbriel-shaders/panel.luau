@@ -158,7 +158,7 @@ local function preview(effect, width, height)
   local path = localPreview.image
   if type(path) == "string" and path ~= "" then
     return ui.image({
-      key = "preview-" .. effect.id,
+      key = "preview-" .. effect.id .. ":" .. (catalogue.fingerprint or ""),
       path = path,
       width = width,
       height = height,
@@ -985,7 +985,9 @@ render = function()
       ui.button({
         key = "refresh",
         glyph = "refresh",
-        tooltip = noctalia.tr("panel.refresh_catalogue"),
+        tooltip = noctalia.tr(
+          catalogue.mode == "local" and "panel.refresh_local" or "panel.refresh_catalogue"
+        ),
         onClick = "refresh",
         enabled = ready,
         variant = "ghost",

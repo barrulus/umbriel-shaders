@@ -50,6 +50,10 @@ function Controller:checkGeneration(g)
   assert(U.hex(g.token, 32), noctalia.tr("controller.invalid_saved_generation_id"))
   local directory = U.path(self.root, "generations/" .. g.token)
   assert(
+    not g.library or g.library == directory .. "/library",
+    noctalia.tr("controller.invalid_managed_asset_path")
+  )
+  assert(
     g.config == directory .. "/config.toml"
       and g.files[g.config]
       and g.files[directory .. "/marker.glsl"],
@@ -135,6 +139,32 @@ function Controller:stateHash()
   return U.exists(self.root .. "/state.json") and U.hash(U.read(self.root .. "/state.json"))
     or false
 end
+function Controller:cacheInstalled(generation, state)
+  if not generation or not generation.library then
+    return
+  end
+  local library = self.root .. "/library"
+  -- Older versions ran directly from this cache. Do not alter it while it is
+  -- still needed by the active configuration or its Undo revision.
+  for _, key in ipairs({ "current", "previous" }) do
+    local retained = state[key]
+    if retained then
+      for path in pairs(retained.files) do
+        if path:sub(1, #library + 1) == library .. "/" then
+          return
+        end
+      end
+    end
+  end
+  -- Keep installed customizations available after removal/Restore, as before.
+  -- Live configurations always use their independent generation copies.
+  for _, path in ipairs(U.keys(generation.files)) do
+    if path:sub(1, #generation.library + 1) == generation.library .. "/" then
+      U.atomic(library .. path:sub(#generation.library + 1), U.read(path))
+      A.checkpoint()
+    end
+  end
+end
 function Controller:cleanup(state)
   if U.exists(self.root .. "/pending.json") then
     return
@@ -160,6 +190,20 @@ function Controller:cleanup(state)
   end
   for _, id in ipairs(noctalia.listDir(dir) or {}) do
     if U.hex(id, 32) and not keep[id] then
+      local directory = dir .. "/" .. id
+      local inventory = directory .. "/managed-files.json"
+      if U.exists(inventory) then
+        for _, path in ipairs(U.load(inventory)) do
+          assert(
+            path:sub(1, #directory + 1) == directory .. "/",
+            noctalia.tr("controller.invalid_managed_asset_path")
+          )
+          U.path(directory, path:sub(#directory + 2))
+          U.remove(path)
+          A.checkpoint()
+        end
+        U.remove(inventory)
+      end
       -- The host exposes file removal, not recursive directory deletion.
       for _, name in ipairs({ "config.toml", "marker.glsl" }) do
         U.remove(dir .. "/" .. id .. "/" .. name)
@@ -167,8 +211,11 @@ function Controller:cleanup(state)
     end
   end
 end
-function Controller:prepare(catalogue, requested, family, compare)
-  assert(next(requested), noctalia.tr("controller.choose_at_least_one_effect_or_slot_to_remove"))
+function Controller:prepare(catalogue, requested, family, compare, refreshing)
+  assert(
+    next(requested) or refreshing,
+    noctalia.tr("controller.choose_at_least_one_effect_or_slot_to_remove")
+  )
   assert(
     not U.exists(self.root .. "/pending.json"),
     noctalia.tr("controller.recover_the_interrupted_operation_first")
@@ -207,6 +254,27 @@ function Controller:prepare(catalogue, requested, family, compare)
   self:cleanup(before)
   local graph = G.read(self.base)
   local bindings = before.current and U.copy(before.current.bindings) or {}
+  if refreshing then
+    assert(
+      managed and catalogue.mode == "local",
+      noctalia.tr("controller.another_configuration_replaced_the_wrapper")
+    )
+  end
+  if catalogue.mode == "local" then
+    -- Local selections use current checkout assets. Recheck their requirements,
+    -- preserving chosen destinations and activation settings, including family timing.
+    for slot, binding in pairs(bindings) do
+      for _, effect in ipairs(catalogue.registry.effects) do
+        if effect.id == binding.id then
+          local updated = S.binding(catalogue.registry, binding.id, slot)
+          assert(updated.name == binding.name, noctalia.tr("source.catalogue_identity_changed"))
+          updated.settings = U.copy(binding.settings)
+          bindings[slot] = updated
+          break
+        end
+      end
+    end
+  end
   for slot, id in pairs(requested) do
     assert(S.slot(slot), noctalia.tr("controller.unsupported_selection_slot"))
     if id == "" then
@@ -249,14 +317,40 @@ function Controller:prepare(catalogue, requested, family, compare)
       )
     end
   end
-  local selected = catalogue:resolve(bindings, graph, self.root .. "/library", compare)
   local id = U.token()
   local directory = self.root .. "/generations/" .. id
   assert(
     not U.exists(directory),
     noctalia.tr("controller.generation_identity_collision_review_again")
   )
+  local library = directory .. "/library"
   local config, shader = directory .. "/config.toml", directory .. "/marker.glsl"
+  local inventory = directory .. "/managed-files.json"
+  U.save(inventory, { config, shader })
+  local installedLibraries = {}
+  if before.current and before.current.library then
+    table.insert(installedLibraries, before.current.library)
+  end
+  table.insert(installedLibraries, self.root .. "/library")
+  local selected =
+    catalogue:resolve(bindings, graph, library, compare, installedLibraries, inventory)
+  -- An explicitly edited installed asset is the current look to preserve for
+  -- rollback. Never adopt edits to the generated config or ownership marker.
+  local beforeFiles
+  if managed then
+    beforeFiles = U.copy(before.current.files)
+    for path, expected in pairs(beforeFiles) do
+      local asset = false
+      for _, root in ipairs(installedLibraries) do
+        asset = asset or path:sub(1, #root + 1) == root .. "/"
+      end
+      if asset then
+        beforeFiles[path] = U.fingerprint(path)
+      else
+        U.verify({ [path] = expected })
+      end
+    end
+  end
   local generation = {
     token = id,
     config = config,
@@ -264,6 +358,7 @@ function Controller:prepare(catalogue, requested, family, compare)
     bindings = bindings,
     settings = settings,
     presets = selected.presets,
+    library = library,
   }
   U.atomic(shader, "vec4 cursor(vec2 uv) { return umbriel_sample(uv); }\n")
   local lines = { "# Managed by Umbriel Shaders. Edit the original configuration." }
@@ -292,6 +387,7 @@ function Controller:prepare(catalogue, requested, family, compare)
   U.verify(selected.files)
   generation.files[config] = U.fingerprint(config)
   generation.files[shader] = U.fingerprint(shader)
+  U.save(directory .. "/managed-files.json", U.keys(generation.files))
   U.save(self.root .. "/plan.json", {
     schema_version = 1,
     created = noctalia.nowMs(),
@@ -304,6 +400,7 @@ function Controller:prepare(catalogue, requested, family, compare)
     requested = requested,
     adopted = adopted,
     used_local_copy = #selected.local_copies > 0,
+    before_files = beforeFiles,
   })
   local previous = U.copy(graph.settings)
   if before.current then
@@ -464,6 +561,10 @@ function Controller:transact(before, after, desired, baseFiles, expected)
   end
   U.remove(self.root .. "/pending.json")
   pcall(function()
+    self:cacheInstalled(before.current, after)
+    self:cacheInstalled(after.current, after)
+  end)
+  pcall(function()
     U.remove(self.root .. "/plan.json")
     self:cleanup(after)
   end)
@@ -496,6 +597,10 @@ function Controller:apply(id)
   )
   U.verify(plan.base_files)
   local before = self:state()
+  if before.current and plan.before_files then
+    U.verify(plan.before_files)
+    before.current.files = plan.before_files
+  end
   if not Peer.sameSession(before.session, self.peer.session) or plan.adopted then
     before = empty(self.base, self.peer.session)
   end
@@ -538,6 +643,46 @@ function Controller:apply(id)
   local result = self:status()
   result.used_local_copy = plan.used_local_copy == true
   result.message = noctalia.tr("controller.shader_selections_applied_and_gpu_compilation_verified")
+  return result
+end
+function Controller:refreshLocal(catalogue)
+  local status = self:status()
+  if not status.managed then
+    return status
+  end
+  local prepared = self:prepare(catalogue, {}, nil, false, true)
+  local before = self:state()
+  local plan = U.load(self.root .. "/plan.json")
+  local current = before.current
+  local unchanged = U.equal(current.files, plan.before_files)
+    and U.equal(current.bindings, plan.generation.bindings)
+    and U.equal(current.settings, plan.generation.settings)
+    and U.equal(current.presets, plan.generation.presets)
+  local oldLibrary = current.library or self.root .. "/library"
+  local oldCount, newCount = 0, 0
+  for path in pairs(current.files) do
+    if path:sub(1, #oldLibrary + 1) == oldLibrary .. "/" then
+      oldCount += 1
+    end
+  end
+  for path in pairs(plan.generation.files) do
+    local library = plan.generation.library
+    if path:sub(1, #library + 1) == library .. "/" then
+      newCount += 1
+      local previous = oldLibrary .. path:sub(#library + 1)
+      unchanged = unchanged and current.files[previous] ~= nil and U.read(previous) == U.read(path)
+      A.checkpoint()
+    end
+  end
+  if unchanged and oldCount == newCount then
+    -- A preview-only edit must not discard the last useful Undo revision.
+    U.remove(self.root .. "/plan.json")
+    self:cleanup(before)
+    status.message = noctalia.tr("controller.local_shaders_unchanged")
+    return status
+  end
+  local result = self:apply(prepared.plan_token)
+  result.message = noctalia.tr("controller.local_shaders_refreshed")
   return result
 end
 function Controller:undo()

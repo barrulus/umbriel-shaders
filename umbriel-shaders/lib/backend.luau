@@ -170,6 +170,12 @@ function M.new(root)
               return connect():status()
             end)
             if live then
+              if action == "refresh" and catalogue.mode == "local" then
+                operation = { action = action, started = noctalia.nowMs(), outcome = "running" }
+                record("running", "")
+                status = controller:refreshLocal(catalogue)
+                record("passed", status.message)
+              end
               for k, v in pairs(status) do
                 value[k] = v
               end

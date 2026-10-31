@@ -63,7 +63,7 @@ F.call('recover',nil,false)
 F.time+=8000
 F.check(not F.call('recover').managed,'Recover interrupted callback')
 local reused=F.call('choose',{effect='cursor/cursor-fixture',slot='effects.cursor'})
-F.check(reused.used_local_copy,'Local-copy status was lost after application')
+F.check(not reused.used_local_copy,'Local selection reused a stale installed copy')
 local active=F.active
 F.session+=0.0000002
 F.backend=require('lib/backend.luau').new('/state')

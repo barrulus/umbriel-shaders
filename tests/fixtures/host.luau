@@ -120,7 +120,7 @@ local targets={{kind='cursor',target=''}, {kind='window',target='42'}, {kind='bo
 function F.report()
   local current=config(F.active)
   local presets,pools,owners={}, {}, {{type='window',id='42',slots={}},{type='output',name='Display with/slash',slots={}}}
-  for name,d in pairs(current.presets) do table.insert(presets,{name=name,kind=d.kind,state=F.fail.compile==name and 'failed' or 'compiled'}) end
+  for name,d in pairs(current.presets) do table.insert(presets,{name=name,kind=d.kind,state=(F.fail.compile==name or (F.fail.shader and (F.files[d.shader] or ''):find(F.fail.shader,1,true))) and 'failed' or 'compiled'}) end
   for name,d in pairs(current.pools) do local members={}; for _,member in ipairs(d.choose) do table.insert(members,{name=member}) end; table.insert(pools,{name=name,members=members}) end
   local cursor
   for _,t in ipairs(targets) do

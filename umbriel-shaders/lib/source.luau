@@ -211,25 +211,36 @@ function Source:collectCache()
     A.checkpoint()
   end
 end
-function Source:resolve(bindings, base, library, compare)
+function Source:resolve(bindings, base, library, compare, installedLibraries, inventory)
   local result = { files = {}, presets = {}, definitions = {}, local_copies = {} }
+  local written = inventory and U.load(inventory) or {}
+  installedLibraries = installedLibraries or { library }
+  local installed = {}
   local effects, names, selected, visiting = {}, {}, {}, {}
   for _, e in ipairs(self.registry.effects) do
     effects[e.id] = e
     names[e.preset] = e.id
   end
-  for _, kind in ipairs({ "cursor", "border", "window", "screen", "animation" }) do
-    local dir = U.path(library, kind)
-    if U.exists(dir) then
-      local entries = assert(noctalia.listDir(dir))
-      assert(#entries <= 512, noctalia.tr("source.too_many_installed_effect_records"))
-      for _, entry in ipairs(entries) do
-        local id = kind .. "/" .. entry
-        local path = U.path(library, id .. "/preset.json")
-        if U.exists(path) then
-          local record = U.load(path)
-          assert(record.id == id, noctalia.tr("source.installed_effect_identity_mismatch"))
-          names[record.name] = id
+  for _, storedLibrary in ipairs(installedLibraries) do
+    for _, kind in ipairs({ "cursor", "border", "window", "screen", "animation" }) do
+      local dir = U.path(storedLibrary, kind)
+      if U.exists(dir) then
+        local entries = assert(noctalia.listDir(dir))
+        assert(#entries <= 512, noctalia.tr("source.too_many_installed_effect_records"))
+        for _, entry in ipairs(entries) do
+          local id = kind .. "/" .. entry
+          local path = U.path(storedLibrary, id .. "/preset.json")
+          if not installed[id] and U.exists(path) then
+            local record = U.load(path)
+            assert(record.id == id, noctalia.tr("source.installed_effect_identity_mismatch"))
+            names[record.name] = id
+            installed[id] = {
+              record = record,
+              library = storedLibrary,
+              directory = U.path(storedLibrary, id),
+              path = path,
+            }
+          end
         end
       end
     end
@@ -291,9 +302,14 @@ function Source:resolve(bindings, base, library, compare)
       assert(id, noctalia.tr("source.missing_installed_identity"))
       local directory = U.path(library, id)
       local recordPath = directory .. "/preset.json"
-      local definition, notices
-      if U.exists(recordPath) then
-        local record = U.load(recordPath)
+      local definition, notices, shader
+      local noticeBytes = {}
+      -- Local authoring takes its available effects from the checkout. Other
+      -- modes preserve installed customizations; withdrawn effects can still be
+      -- kept or removed without the source. Every output is a new immutable copy.
+      local existing = installed[id]
+      if existing and not (self.mode == "local" and effects[id]) then
+        local record = existing.record
         assert(
           record.id == id and record.name == name,
           noctalia.tr("source.installed_preset_identity_changed")
@@ -306,7 +322,11 @@ function Source:resolve(bindings, base, library, compare)
         )
         notices = record.notices or {}
         overlay(definition, depth)
-        localCopy(id, name, definition, directory .. "/shader.glsl", recordPath)
+        localCopy(id, name, definition, existing.directory .. "/shader.glsl", existing.path)
+        shader = U.read(existing.directory .. "/shader.glsl")
+        for _, notice in ipairs(notices) do
+          noticeBytes[notice] = U.read(U.path(existing.library .. "/notices", notice))
+        end
       else
         local effect = assert(
           effects[id],
@@ -354,9 +374,8 @@ function Source:resolve(bindings, base, library, compare)
           U.equal(dependencies, expectedDeps),
           noctalia.tr("source.preset_dependencies_differ_from_catalogue")
         )
-        local shader = self:bytes(shaderPath)
+        shader = self:bytes(shaderPath)
         local expected = { [presetPath] = true, [shaderPath] = true }
-        local noticeBytes = {}
         notices = effect.notice_files
         for _, notice in ipairs(notices) do
           noticeBytes[notice] = self:bytes(notice)
@@ -377,21 +396,24 @@ function Source:resolve(bindings, base, library, compare)
           assert(found, noctalia.tr("source.overlay_is_not_a_declared_dependency"))
           overlay(definition, depth)
         end
-        local path = directory .. "/shader.glsl"
-        assert(
-          not U.exists(path) or U.read(path) == shader,
-          noctalia.tr("source.unrecorded_customised_shader_needs_review")
-        )
-        U.atomic(path, shader)
-        for notice, raw in pairs(noticeBytes) do
-          local dest = U.path(library .. "/notices", notice)
-          if not U.exists(dest) then
-            U.atomic(dest, raw)
-          end
-        end
-        definition.shader = "shader.glsl"
-        U.save(recordPath, { id = id, name = name, definition = definition, notices = notices })
       end
+      if inventory then
+        table.insert(written, directory .. "/shader.glsl")
+        table.insert(written, recordPath)
+        for notice in pairs(noticeBytes) do
+          table.insert(written, U.path(library .. "/notices", notice))
+        end
+        -- Record paths before writing, so failed or interrupted preparation can
+        -- collect its partial revision without touching another generation.
+        U.save(inventory, written)
+      end
+      U.atomic(directory .. "/shader.glsl", shader)
+      for notice, raw in pairs(noticeBytes) do
+        U.atomic(U.path(library .. "/notices", notice), raw)
+      end
+      definition = U.copy(definition)
+      definition.shader = "shader.glsl"
+      U.save(recordPath, { id = id, name = name, definition = definition, notices = notices })
       definition = U.copy(definition)
       definition.shader = directory .. "/shader.glsl"
       result.definitions[name] = definition

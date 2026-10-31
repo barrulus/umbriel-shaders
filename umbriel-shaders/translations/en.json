@@ -201,7 +201,8 @@
     "plugin_storage_is_unavailable": "Plugin storage is unavailable.",
     "opened_the_plugin_data_folder": "Opened the plugin data folder.",
     "could_not_open_the_folder_its_path_is_in_overview": "Could not open the folder. Its path is in Overview.",
-    "could_not_start_the_file_manager": "Could not start the file manager."
+    "could_not_start_the_file_manager": "Could not start the file manager.",
+    "refresh_local": "Refresh catalogue and update active shaders"
   },
   "async": {
     "host_operation_queue_remained_full": "Host operation queue remained full"
@@ -262,7 +263,9 @@
     "the_previous_command_may_still_be_finishing_retry_recovery_in_a_few_seconds": "The previous command may still be finishing. Retry recovery in a few seconds.",
     "recovery_belongs_to_another_compositor_socket": "Recovery belongs to another compositor socket",
     "foreign_managed_configuration_is_active": "Foreign managed configuration is active",
-    "interrupted_operation_recovered": "Interrupted operation recovered."
+    "interrupted_operation_recovered": "Interrupted operation recovered.",
+    "local_shaders_refreshed": "Active shaders updated from the local checkout.",
+    "local_shaders_unchanged": "Catalogue refreshed. Active shaders are already up to date."
   },
   "graph": {
     "quoted_dotted_setting_key_is_not_a_nested_table": "Quoted dotted setting key is not a nested table",
