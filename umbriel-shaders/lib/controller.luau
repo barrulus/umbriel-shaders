@@ -3,6 +3,7 @@ local A = require("./async.luau")
 local U = require("./util.luau")
 local S = require("./selection.luau")
 local R = require("./runtime.luau")
+local Allocation = require("./allocation.luau")
 local G = require("./graph.luau")
 local Peer = require("./peer.luau")
 local M = {}
@@ -70,12 +71,15 @@ function Controller:checkGeneration(g)
     )
   end
   assert(
-    #U.keys(g.bindings) <= 13 and #g.presets <= 512,
+    #U.keys(g.bindings) <= 269 and #g.presets <= 512,
     noctalia.tr("controller.oversized_saved_selection")
   )
   for slot, b in pairs(g.bindings) do
-    assert(S.slot(slot), noctalia.tr("controller.invalid_saved_selection_slot"))
-    U.relative(b.id)
+    local use = Allocation.destination(slot)
+    assert(S.slot(use), noctalia.tr("controller.invalid_saved_selection_slot"))
+    if b.id ~= "@default" and b.id ~= "@off" then
+      U.relative(b.id)
+    end
     for k, v in pairs(b.settings) do
       S.setting(k, v)
     end
@@ -117,13 +121,26 @@ end
 function Controller:status()
   local state, report = self:state(), self.peer:effects()
   local managed = self:owned(state, report)
-  local selections = {}
+  local selections, assignments, windows = {}, {}, {}
   if state.current then
     for slot, b in pairs(state.current.bindings) do
       selections[slot] = b.id
+      local use, app = Allocation.destination(slot)
+      table.insert(assignments, { key = slot, slot = use, application = app, id = b.id })
+    end
+  end
+  table.sort(assignments, function(a, b)
+    return a.key < b.key
+  end)
+  for _, owner in ipairs(report.owners or {}) do
+    if owner.type == "window" then
+      table.insert(windows, { id = owner.id, app_id = owner.app_id or "", slots = owner.slots })
     end
   end
   return {
+    assignments = assignments,
+    windows = windows,
+    settings = state.current and state.current.settings or {},
     managed = managed,
     pending = U.exists(self.root .. "/pending.json"),
     can_undo = managed and state.can_undo,
@@ -211,9 +228,10 @@ function Controller:cleanup(state)
     end
   end
 end
-function Controller:prepare(catalogue, requested, family, compare, refreshing)
+function Controller:prepare(catalogue, requested, family, compare, refreshing, options)
+  options = options or {}
   assert(
-    next(requested) or refreshing,
+    next(requested) or refreshing or options.timing,
     noctalia.tr("controller.choose_at_least_one_effect_or_slot_to_remove")
   )
   assert(
@@ -266,7 +284,7 @@ function Controller:prepare(catalogue, requested, family, compare, refreshing)
     for slot, binding in pairs(bindings) do
       for _, effect in ipairs(catalogue.registry.effects) do
         if effect.id == binding.id then
-          local updated = S.binding(catalogue.registry, binding.id, slot)
+          local updated = S.binding(catalogue.registry, binding.id, (Allocation.destination(slot)))
           assert(updated.name == binding.name, noctalia.tr("source.catalogue_identity_changed"))
           updated.settings = U.copy(binding.settings)
           bindings[slot] = updated
@@ -276,16 +294,64 @@ function Controller:prepare(catalogue, requested, family, compare, refreshing)
     end
   end
   for slot, id in pairs(requested) do
-    assert(S.slot(slot), noctalia.tr("controller.unsupported_selection_slot"))
+    local use, app = Allocation.destination(slot)
+    assert(S.slot(use), noctalia.tr("controller.unsupported_selection_slot"))
     if id == "" then
       bindings[slot] = nil
+    elseif id == "@default" then
+      assert(not app, noctalia.tr("allocation.default_is_global"))
+      bindings[slot] = {
+        id = id,
+        name = "",
+        kind = use:match("^animation%.") and "animation" or use:sub(9),
+        settings = {},
+        required = {},
+        features = {},
+      }
+      if use:match("^animation%.") then
+        bindings[slot].settings["animation.enabled"] = true
+        bindings[slot].settings[use .. ".enabled"] = true
+        bindings[slot].settings[use .. ".effect"] = ""
+      else
+        bindings[slot].settings[use] = ""
+      end
+    elseif id == "@off" then
+      bindings[slot] = {
+        id = id,
+        name = "off",
+        kind = use:match("^animation%.") and "animation" or use:sub(9),
+        settings = {},
+        required = {},
+        features = {},
+      }
+      if use:match("^animation%.") then
+        bindings[slot].settings[use .. ".enabled"] = false
+      else
+        bindings[slot].settings[use] = app and "off" or ""
+      end
     else
-      bindings[slot] = S.binding(catalogue.registry, id, slot, family)
+      bindings[slot] = S.binding(catalogue.registry, id, use, family)
     end
   end
+  if options.timing then
+    local slot = options.timing
+    assert(
+      S.slot(slot) and slot:match("^animation%.") and bindings[slot] and bindings[slot].id ~= "@off",
+      noctalia.tr("allocation.choose_animation_first")
+    )
+    S.setting(slot .. ".duration_ms", options.duration_ms)
+    assert(
+      table.find(Allocation.durationCurves, options.curve),
+      noctalia.tr("allocation.choose_duration_curve")
+    )
+    bindings[slot].settings[slot .. ".duration_ms"] = options.duration_ms
+    bindings[slot].settings[slot .. ".curve"] = options.curve
+  end
+  assert(#U.keys(bindings) <= 269, noctalia.tr("controller.oversized_saved_selection"))
   local settings, requirements, features = {}, {}, {}
-  for _, b in pairs(bindings) do
-    for k, v in pairs(b.settings) do
+  for destination, b in pairs(bindings) do
+    local _, app = Allocation.destination(destination)
+    for k, v in pairs(app and {} or b.settings) do
       assert(
         settings[k] == nil or U.equal(settings[k], v),
         noctalia.tr("controller.conflicting_activation_settings", { value = k })
@@ -326,7 +392,8 @@ function Controller:prepare(catalogue, requested, family, compare, refreshing)
   local library = directory .. "/library"
   local config, shader = directory .. "/config.toml", directory .. "/marker.glsl"
   local inventory = directory .. "/managed-files.json"
-  U.save(inventory, { config, shader })
+  local rules = directory .. "/applications.toml"
+  U.save(inventory, { config, shader, rules })
   local installedLibraries = {}
   if before.current and before.current.library then
     table.insert(installedLibraries, before.current.library)
@@ -365,7 +432,18 @@ function Controller:prepare(catalogue, requested, family, compare, refreshing)
   for _, line in ipairs(U.settingLines(settings)) do
     table.insert(lines, line)
   end
-  table.insert(lines, "[include]\nfiles = [" .. U.json(self.base) .. "]")
+  local ruleLines =
+    { "# Application effect preferences; original configuration rules take precedence." }
+  for _, key in ipairs(U.keys(bindings)) do
+    local use, app = Allocation.destination(key)
+    if app then
+      table.insert(ruleLines, "[[window_rule]]\nmatch.app_id = " .. U.json(Allocation.pattern(app)))
+      table.insert(ruleLines, use:sub(9) .. "_effect = " .. U.json(bindings[key].name))
+    end
+  end
+  U.atomic(rules, table.concat(ruleLines, "\n") .. "\n")
+  generation.files[rules] = U.fingerprint(rules)
+  table.insert(lines, "[include]\nfiles = [" .. U.json(rules) .. ", " .. U.json(self.base) .. "]")
   for _, name in ipairs(U.keys(selected.definitions)) do
     table.insert(lines, "[effects.preset." .. U.json(name) .. "]")
     for _, key in ipairs(U.keys(selected.definitions[name])) do
@@ -417,6 +495,16 @@ function Controller:prepare(catalogue, requested, family, compare, refreshing)
       if settings[k] == nil then
         table.insert(changes, { key = k, before = v, after = graph.settings[k] })
       end
+    end
+  end
+  for key in pairs(requested) do
+    local _, app = Allocation.destination(key)
+    if app then
+      local old = before.current and before.current.bindings[key]
+      table.insert(
+        changes,
+        { key = key, before = old and old.name, after = bindings[key] and bindings[key].name }
+      )
     end
   end
   local unknown = {}
@@ -471,7 +559,7 @@ function Controller:confirm(state)
         presets[name] ~= "failed" and presets[name] ~= "error",
         noctalia.tr("controller.shader_failed_gpu_compilation", { value = name })
       )
-      ready = ready and presets[name] == "compiled"
+      ready = ready and (presets[name] == "compiled" or presets[name] == "unreferenced")
     end
     if ready then
       return
@@ -616,33 +704,20 @@ function Controller:apply(id)
   after.previous_original = U.copy(before.original)
   after.previous_owned = U.copy(before.owned)
   after.undo_runtime = {}
-  local desired = U.copy(live)
+  -- Defaults and application preferences are configuration, never runtime overrides.
+  -- Release runtime selections owned by older plugin versions without touching
+  -- overrides changed externally since the plugin last observed them.
+  local desired = restored(live, before.owned, before.original)
   for key, record in pairs(live) do
-    local slot = "effects." .. record.kind
-    if plan.requested[slot] ~= nil then
+    if before.owned[key] and U.equal(record, before.owned[key]) then
       after.undo_runtime[key] = U.copy(record)
-      if after.current.bindings[slot] then
-        after.original[key] = after.original[key] or U.copy(record)
-        desired[key].value = {
-          name = after.current.bindings[slot].name,
-          pool = "",
-          source = "runtime",
-          suppressed = false,
-        }
-        after.owned[key] = U.copy(desired[key])
-      else
-        if before.original[key] and U.equal(record, before.owned[key]) then
-          desired[key] = U.copy(before.original[key])
-        end
-        after.original[key] = nil
-        after.owned[key] = nil
-      end
     end
   end
+  after.original, after.owned = {}, {}
   self:transact(before, after, desired, plan.base_files, R.stamp(report))
   local result = self:status()
   result.used_local_copy = plan.used_local_copy == true
-  result.message = noctalia.tr("controller.shader_selections_applied_and_gpu_compilation_verified")
+  result.message = noctalia.tr("controller.selections_applied")
   return result
 end
 function Controller:refreshLocal(catalogue)

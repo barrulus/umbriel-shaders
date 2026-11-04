@@ -35,6 +35,13 @@ lines.append('''
 local value=fixture.call('catalogue')
 assert(#value.catalogue.effects>20,'Real catalogue lost entries')
 local source=fixture.run(function() return require('lib/source.luau').open('/state',false) end)
+local A=require('lib/allocation.luau')
+for _,event in ipairs({'overview','scratchpad','border','dim_unfocused','layers'}) do
+  local slot='animation.'..event
+  local record=require('lib/selection.luau').find(source.registry.effects,A.example(slot))
+  assert(#record.uses==1 and record.uses[1]==slot,'Community example has wrong uses: '..slot)
+  assert(record.activation and record.activation.settings[slot..'.effect']==record.preset,'Community example lacks a selectable recipe: '..slot)
+end
 local S=require('lib/selection.luau')
 local recipes=0
 for _,effect in ipairs(source.registry.effects) do

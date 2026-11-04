@@ -202,7 +202,53 @@
     "opened_the_plugin_data_folder": "Opened the plugin data folder.",
     "could_not_open_the_folder_its_path_is_in_overview": "Could not open the folder. Its path is in Overview.",
     "could_not_start_the_file_manager": "Could not start the file manager.",
-    "refresh_local": "Refresh catalogue and update active shaders"
+    "refresh_local": "Refresh catalogue and update active shaders",
+    "global_defaults": "Global defaults",
+    "global_slots_help": "Choose default effects. Window rules and temporary runtime overrides can replace these selections. Inherit returns a slot to the original configuration.",
+    "application_slots_help": "Applies to all windows with this exact app ID. Handwritten rules take precedence; temporary overrides and suppression remain active. Opening, closing and movement assignments require additional Umbriel support.",
+    "no_effect": "No effect",
+    "inherit": "Inherit",
+    "choose_shader": "Choose shader",
+    "effective_selection": "Selected window: {name} · {source}",
+    "source_default": "Default",
+    "source_rule": "Window rule",
+    "source_runtime": "Runtime override",
+    "suppressed": "Suppressed",
+    "duration_value": "Duration override: {duration} ms",
+    "effect_slots": "Effect slots",
+    "refresh_windows": "Refresh windows",
+    "assignment_context": "Assignment: {target} · {slot}",
+    "curve_override": "Curve override",
+    "curve_linear": "Linear",
+    "curve_ease": "Ease",
+    "curve_easein": "Ease in",
+    "curve_easeout": "Ease out",
+    "curve_easeinout": "Ease in/out",
+    "curve_easeoutcubic": "Ease out (cubic)",
+    "curve_easeinoutcubic": "Ease in/out (cubic)",
+    "duration_help": "Apply saves both timing overrides. Spring curves set their own duration; choose an easing curve for a fixed duration.",
+    "default_allocation": "DEFAULT ALLOCATION",
+    "window_rules": "Window rules",
+    "rules_help": "Assign effects to applications selected from open windows. Each assignment covers every window with that app ID. Handwritten rules and temporary overrides take precedence.",
+    "no_window_rules": "No application assignments for this slot.",
+    "add": "Add",
+    "cancel_add": "Cancel",
+    "add_window_rule": "Add application",
+    "no_available_applications": "Open another application to add an assignment. Applications already assigned to this slot are omitted.",
+    "animation_rules_unavailable": "Per-application animation rules require additional Umbriel support.",
+    "rule_live_example": "Live example: {name} · {source}",
+    "window_rule_count": {
+      "one": "1 rule",
+      "other": "{count} rules"
+    },
+    "default": "Default",
+    "native_default": "Default · Native animation",
+    "configured_default": "Default · From configuration",
+    "try_example": "Try example",
+    "no_shader_default": "Default · No shader",
+    "example_unavailable": "This example is not in the loaded catalogue. Refresh an updated community checkout or catalogue to select it.",
+    "umbriel_documentation": "Umbriel documentation",
+    "open_umbriel_documentation": "Open the relevant Umbriel documentation in your browser"
   },
   "async": {
     "host_operation_queue_remained_full": "Host operation queue remained full"
@@ -265,7 +311,8 @@
     "foreign_managed_configuration_is_active": "Foreign managed configuration is active",
     "interrupted_operation_recovered": "Interrupted operation recovered.",
     "local_shaders_refreshed": "Active shaders updated from the local checkout.",
-    "local_shaders_unchanged": "Catalogue refreshed. Active shaders are already up to date."
+    "local_shaders_unchanged": "Catalogue refreshed. Active shaders are already up to date.",
+    "selections_applied": "Selections applied. Unused shaders compile when first needed."
   },
   "graph": {
     "quoted_dotted_setting_key_is_not_a_nested_table": "Quoted dotted setting key is not a nested table",
@@ -401,5 +448,50 @@
     "plugin_storage_is_unavailable": "Plugin storage is unavailable.",
     "working": "Working…",
     "could_not_start_the_operation": "Could not start the operation."
+  },
+  "allocation": {
+    "invalid_application": "Choose an application with a valid app ID (up to 256 bytes).",
+    "unsupported_application_slot": "Application assignments support border and window-surface effects only.",
+    "invalid_destination": "Invalid effect destination.",
+    "choose_animation_first": "Choose an animation shader before changing its timing.",
+    "choose_duration_curve": "Choose a duration-based curve for a duration override.",
+    "default_is_global": "Use Inherit to remove an application assignment; Default applies to global slots."
+  },
+  "examples": {
+    "overview": {
+      "name": "Example · Overview glow",
+      "description": "A soft blue pulse across overview trees during navigation and overview transitions."
+    },
+    "scratchpad": {
+      "name": "Example · Scratchpad fade",
+      "description": "A gentle fade as scratchpad windows and their backdrops appear or disappear."
+    },
+    "border": {
+      "name": "Example · Focus ring pulse",
+      "description": "A brief blue highlight on the border ring when focus changes."
+    },
+    "dim_unfocused": {
+      "name": "Example · Focus desaturation",
+      "description": "A brief loss of colour during focus changes, with 20% native unfocused dimming."
+    },
+    "layers": {
+      "name": "Example · Panel glide",
+      "description": "A short vertical glide and fade for layer-shell surfaces as they appear or disappear."
+    }
+  },
+  "slot_descriptions": {
+    "animation_windows_in": "Runs once when a window opens, processing the window and its subsurfaces together. A selected shader replaces the native opening style and scale.",
+    "animation_windows_out": "Runs while a window closes, processing its captured content. A selected shader replaces the native closing style and scale.",
+    "animation_windows_move": "Processes window content during animated position changes, including moves, layout reflow, maximize and restore.",
+    "animation_workspaces": "Processes workspace transitions. Slide moves the workspace scenes; reveal combines outgoing and incoming scenes, including wallpaper and shell surfaces.",
+    "animation_overview": "Processes overview trees during opening, closing and animated navigation between workspace previews.",
+    "animation_scratchpad": "Processes scratchpad windows as they appear or disappear, together with their dimming and blur backdrops.",
+    "animation_border": "Processes the visible border ring during focus-colour transitions. This is a brief animation, separate from the persistent window-border effect.",
+    "animation_dim_unfocused": "Processes the window and its subsurfaces during focus-related dimming transitions. Dimming must be enabled with a nonzero dim amount to be visible.",
+    "animation_layers": "Processes layer-shell surfaces, such as bars, panels and overlays, during their appearance and disappearance. Layer animations must be enabled.",
+    "effects_border": "A persistent effect on window decoration borders. It normally applies to the focused window; Umbriel settings can extend it to unfocused windows.",
+    "effects_window": "A persistent effect over each window surface. It can alter the window content and sample the scene beneath it. Application rules can override this default.",
+    "effects_cursor": "A persistent effect around the pointer, such as a glow or trail. It follows the cursor and has no per-window assignment.",
+    "effects_screen": "A persistent effect across an entire output, such as a vignette or colour treatment. Output-specific settings can override this default."
   }
 }

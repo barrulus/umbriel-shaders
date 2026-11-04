@@ -77,10 +77,18 @@ local function diagnostic(root, peer, liveError)
       .. "\nIncludes local paths and shader names. Original configuration contents and environment values are excluded."
   )
   section("Original configuration", state and state.base or "No saved original configuration.")
-  section(
-    "Saved selections",
-    state and state.current and U.json(state.current.bindings) or "No saved selections."
-  )
+  local saved, count = {}, 0
+  if state and state.current then
+    for key, binding in pairs(state.current.bindings) do
+      if key:sub(1, 12) == "application:" then
+        count += 1
+        saved["application assignment " .. count] = binding
+      else
+        saved[key] = binding
+      end
+    end
+  end
+  section("Saved selections", next(saved) and U.json(saved) or "No saved selections.")
   if state and state.current then
     ok, err = pcall(function()
       return U.read(state.current.config, 256 * 1024)
@@ -203,9 +211,15 @@ function M.new(root)
             or action == "prepare-family"
             or action == "choose-family"
             or action == "remove"
+            or action == "timing"
           then
             local catalogue
-            if action == "remove" then
+            if
+              action == "timing"
+              or action == "remove"
+              or request.effect == "@off"
+              or request.effect == "@default"
+            then
               catalogue = setmetatable(
                 { registry = { effects = {}, families = {}, feature_definitions = {} } },
                 Source.Source
@@ -216,7 +230,9 @@ function M.new(root)
               catalogue = open(false, true)
             end
             local requested, family
-            if action == "prepare-family" or action == "choose-family" then
+            if action == "timing" then
+              requested = {}
+            elseif action == "prepare-family" or action == "choose-family" then
               family = request.family
               requested = S.familyChoices(catalogue.registry, family, request.choices)
             else
@@ -227,8 +243,26 @@ function M.new(root)
                   or assert(request.effect, noctalia.tr("backend.choose_an_effect")),
               }
             end
-            value = controller:prepare(catalogue, requested, family, request.compare)
-            if action == "choose" or action == "choose-family" or action == "remove" then
+            value = controller:prepare(
+              catalogue,
+              requested,
+              family,
+              request.compare,
+              nil,
+              action == "timing"
+                  and {
+                    timing = request.slot,
+                    duration_ms = request.duration_ms,
+                    curve = request.curve,
+                  }
+                or nil
+            )
+            if
+              action == "choose"
+              or action == "choose-family"
+              or action == "remove"
+              or action == "timing"
+            then
               value = controller:apply(value.plan_token)
             end
           elseif action == "apply" then

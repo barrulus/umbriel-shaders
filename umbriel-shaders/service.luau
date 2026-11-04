@@ -147,6 +147,7 @@ noctalia.state.watch("request", function(request)
     ["prepare-family"] = true,
     ["choose-family"] = true,
     remove = true,
+    timing = true,
     apply = true,
     undo = true,
     restore = true,
@@ -161,7 +162,9 @@ noctalia.state.watch("request", function(request)
   then
     return
   end
-  if request.action == "remove" and type(request.slot) ~= "string" then
+  if
+    (request.action == "remove" or request.action == "timing") and type(request.slot) ~= "string"
+  then
     return
   end
   if

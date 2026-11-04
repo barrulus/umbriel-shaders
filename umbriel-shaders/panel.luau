@@ -1,4 +1,5 @@
 -- SPDX-License-Identifier: MIT
+local Allocation = require("./lib/allocation.luau")
 local opened = false
 local status = noctalia.state.get("status") or {}
 local catalogue = noctalia.state.get("catalogue") or {}
@@ -40,6 +41,21 @@ local labels = {
   ["animation.dim_unfocused"] = noctalia.tr("panel.unfocused_dimming"),
   ["animation.layers"] = noctalia.tr("panel.layer_animations"),
 }
+local slotDocumentation = {
+  ["animation.windows_in"] = "animation/#event-tables",
+  ["animation.windows_out"] = "animation/#event-tables",
+  ["animation.windows_move"] = "animation/#event-tables",
+  ["animation.workspaces"] = "animation/#workspace-reveal",
+  ["animation.overview"] = "animation/#targets",
+  ["animation.scratchpad"] = "animation/#targets",
+  ["animation.border"] = "animation/#targets",
+  ["animation.dim_unfocused"] = "animation/#targets",
+  ["animation.layers"] = "animation/#targets",
+  ["effects.border"] = "effects/#settings",
+  ["effects.window"] = "effects/#what-a-window-effect-sees",
+  ["effects.cursor"] = "effects/#settings",
+  ["effects.screen"] = "effects/#settings",
+}
 local fields = {
   enabled = noctalia.tr("panel.enabled"),
   effect = noctalia.tr("panel.shader"),
@@ -49,7 +65,11 @@ local fields = {
   scale = noctalia.tr("panel.scale"),
 }
 local render
-local supportView, supportNotice = nil, nil
+local supportView, supportNotice = "slots", nil
+local targetApplication, slotFilter = "", nil
+local durationDraft, curveDraft = {}, {}
+local expandedSlot, rulesExpanded = nil, false
+local ruleDrafts, addingRule, applicationChoice = {}, nil, {}
 local diagnosticReturn = nil
 local diagnostics = noctalia.state.get("diagnostics") or {}
 local diagnosticSection = 1
@@ -65,7 +85,9 @@ local function request(action, token, compare)
     token = token,
     compare = compare,
     effect = chosen,
-    slot = chosenSlot,
+    slot = (action == "prepare" or action == "choose")
+        and Allocation.key(chosenSlot, targetApplication)
+      or nil,
     family = familyId,
     choices = familyChoices[familyId],
   })
@@ -248,7 +270,9 @@ end
 local function browserContent(records, ignoreFilters, slot)
   local children, row, count = {}, {}, 0
   for _, effect in ipairs(records or catalogue.effects or {}) do
-    if ignoreFilters or matches(effect) then
+    if
+      (ignoreFilters or matches(effect)) and (not slotFilter or contains(effect.uses, slotFilter))
+    then
       count += 1
       if count <= visibleLimit then
         local entry = effect
@@ -263,7 +287,7 @@ local function browserContent(records, ignoreFilters, slot)
             radius = 12,
             border = isActive(entry) and "primary" or "outline_variant/0.25",
             onClick = function()
-              choose(entry, slot)
+              choose(entry, slot or slotFilter)
             end,
             tooltip = entry.description,
           }, {
@@ -319,6 +343,8 @@ local function openFamily(id)
   if status.busy then
     return
   end
+  targetApplication, slotFilter = "", nil
+  status.plan_token = nil
   familyId, galleryMode, browsing, details = id, "families", true, false
   visibleLimit = 24
   notice = nil
@@ -562,6 +588,10 @@ local function show(value)
   return tostring(value)
 end
 local function changeLabel(key)
+  local use, app = Allocation.destination(key)
+  if app then
+    return app .. " · " .. (labels[use] or use)
+  end
   if labels[key] then
     return labels[key]
   end
@@ -722,17 +752,580 @@ local function supportHeader(title)
   )
 end
 
+local slotOrder = {
+  "animation.windows_in",
+  "animation.windows_out",
+  "animation.windows_move",
+  "effects.border",
+  "effects.window",
+  "effects.cursor",
+  "effects.screen",
+  "animation.workspaces",
+  "animation.overview",
+  "animation.scratchpad",
+  "animation.border",
+  "animation.dim_unfocused",
+  "animation.layers",
+}
+local function assignmentRequest(action, slot, effect, duration, curve, application)
+  pendingAction = action
+  local serial = (noctalia.state.get("request_serial") or 0) + 1
+  noctalia.state.set("request_serial", serial)
+  noctalia.state.set("request", {
+    serial = serial,
+    action = action,
+    slot = Allocation.key(slot, application or targetApplication),
+    effect = effect,
+    duration_ms = duration,
+    curve = curve,
+  })
+end
+local function allocationName(slot, app)
+  local id = (status.selections or {})[Allocation.key(slot, app)]
+  local effect = model.effects[id]
+  return id == "@default" and noctalia.tr(
+    slot:match("^animation%.") and "panel.native_default" or "panel.no_shader_default"
+  ) or id == "@off" and noctalia.tr("panel.no_effect") or (effect and effect.name or (id or noctalia.tr(
+    app == "" and "panel.configured_default" or "panel.inherit"
+  ))),
+    id
+end
+local function chooseAllocation(slot, app)
+  targetApplication = app
+  slotFilter, chosenSlot = slot, slot
+  supportView, browsing, details = nil, true, false
+  galleryMode, familyId, query, tag, kindIndex = "shaders", nil, "", "", 1
+  visibleLimit = 24
+  status.plan_token = nil
+  render()
+end
+local function allocationActions(slot, app, suffix)
+  local _, id = allocationName(slot, app)
+  local ready = not status.busy and not status.pending
+  local controls = {
+    ui.button({
+      key = "slot-choose-" .. slot .. suffix,
+      text = noctalia.tr("panel.choose_shader"),
+      variant = "primary",
+      enabled = ready,
+      onClick = function()
+        chooseAllocation(slot, app)
+      end,
+    }),
+    ui.button({
+      key = "slot-off-" .. slot .. suffix,
+      text = noctalia.tr("panel.no_effect"),
+      enabled = ready,
+      onClick = function()
+        assignmentRequest("choose", slot, "@off", nil, nil, app)
+      end,
+    }),
+    ui.button({
+      key = "slot-inherit-" .. slot .. suffix,
+      text = noctalia.tr("panel.inherit"),
+      enabled = id ~= nil and status.managed == true and ready,
+      onClick = function()
+        assignmentRequest("remove", slot, nil, nil, nil, app)
+      end,
+    }),
+  }
+  if app == "" then
+    table.insert(
+      controls,
+      1,
+      ui.button({
+        key = "slot-default-" .. slot,
+        text = noctalia.tr("panel.default"),
+        enabled = ready,
+        onClick = function()
+          assignmentRequest("choose", slot, "@default", nil, nil, "")
+        end,
+      })
+    )
+  end
+  return ui.row({ gap = 8 }, controls)
+end
+local function windowRules(slot)
+  local applications, seen = {}, {}
+  for _, window in ipairs(status.windows or {}) do
+    local app = window.app_id or ""
+    if app ~= "" and pcall(Allocation.application, app) and not seen[app] then
+      seen[app] = true
+      table.insert(applications, app)
+    end
+  end
+  local assigned = {}
+  for key in pairs(status.selections or {}) do
+    local use, app = Allocation.destination(key)
+    if app and use == slot then
+      assigned[app] = true
+    end
+  end
+  for app in pairs(ruleDrafts[slot] or {}) do
+    assigned[app] = true
+  end
+  local sorted = {}
+  for app in pairs(assigned) do
+    table.insert(sorted, app)
+  end
+  table.sort(sorted)
+  local ready = not status.busy and not status.pending
+  local content = {
+    ui.label({
+      text = noctalia.tr("panel.rules_help"),
+      color = "on_surface/0.65",
+      fontSize = 12,
+      maxLines = 3,
+    }),
+  }
+  for _, app in ipairs(sorted) do
+    local name, id = allocationName(slot, app)
+    local suffix = ":" .. app
+    local children = {
+      ui.row({ gap = 8, align = "center" }, {
+        ui.column({ gap = 4, flexGrow = 1 }, {
+          ui.label({ text = app, fontWeight = "bold", fontSize = 14, maxLines = 2 }),
+          ui.label({ text = name, color = "primary", fontSize = 13, maxLines = 2 }),
+        }),
+        ui.button({
+          key = "rule-remove-" .. slot .. suffix,
+          glyph = "trash",
+          text = noctalia.tr("panel.remove"),
+          enabled = ready and (id == nil or status.managed == true),
+          onClick = function()
+            if ruleDrafts[slot] then
+              ruleDrafts[slot][app] = nil
+            end
+            if id then
+              assignmentRequest("remove", slot, nil, nil, nil, app)
+            else
+              render()
+            end
+          end,
+        }),
+      }),
+      allocationActions(slot, app, suffix),
+    }
+    -- Effective values are a refreshed snapshot; keep them subordinate to the assignment.
+    for _, window in ipairs(status.windows or {}) do
+      if window.app_id == app then
+        local selected = (window.slots or {})[slot:sub(9)]
+        if selected then
+          table.insert(
+            children,
+            ui.label({
+              key = "effective-" .. slot .. suffix,
+              text = noctalia.tr("panel.rule_live_example", {
+                name = selected.name ~= "" and selected.name or noctalia.tr("panel.no_effect"),
+                source = noctalia.tr("panel.source_" .. (selected.source or "default")),
+              })
+                .. (selected.suppressed and " · " .. noctalia.tr("panel.suppressed") or "")
+                .. (selected.pool and selected.pool ~= "" and " · " .. selected.pool or ""),
+              fontSize = 12,
+              color = "on_surface/0.6",
+              maxLines = 3,
+            })
+          )
+        end
+        break
+      end
+    end
+    table.insert(
+      content,
+      ui.column({
+        key = "rule-" .. slot .. suffix,
+        gap = 10,
+        padding = 12,
+        fill = "surface_container_high/0.6",
+        radius = 8,
+        border = "outline_variant/0.4",
+      }, children)
+    )
+  end
+  if #sorted == 0 then
+    table.insert(
+      content,
+      ui.label({
+        text = noctalia.tr("panel.no_window_rules"),
+        color = "on_surface/0.6",
+        fontSize = 13,
+      })
+    )
+  end
+  table.sort(applications)
+  local available = {}
+  for _, app in ipairs(applications) do
+    if not assigned[app] then
+      table.insert(available, app)
+    end
+  end
+  if addingRule == slot then
+    if #available > 0 then
+      local selected = table.find(available, applicationChoice[slot]) or 1
+      applicationChoice[slot] = available[selected]
+      table.insert(
+        content,
+        ui.row({ gap = 8 }, {
+          ui.select({
+            key = "rule-application-" .. slot,
+            options = available,
+            selectedIndex = selected - 1,
+            flexGrow = 1,
+            enabled = ready,
+            onChange = function(value)
+              applicationChoice[slot] = available[(tonumber(value) or 0) + 1]
+              render()
+            end,
+          }),
+          ui.button({
+            key = "rule-confirm-" .. slot,
+            text = noctalia.tr("panel.add"),
+            enabled = ready,
+            onClick = function()
+              ruleDrafts[slot] = ruleDrafts[slot] or {}
+              ruleDrafts[slot][applicationChoice[slot]] = true
+              addingRule = nil
+              render()
+            end,
+          }),
+          ui.button({
+            text = noctalia.tr("panel.cancel_add"),
+            onClick = function()
+              addingRule = nil
+              render()
+            end,
+          }),
+        })
+      )
+    else
+      table.insert(
+        content,
+        ui.label({
+          text = noctalia.tr("panel.no_available_applications"),
+          color = "on_surface/0.65",
+          maxLines = 2,
+        })
+      )
+    end
+  end
+  table.insert(
+    content,
+    ui.button({
+      key = "rule-add-" .. slot,
+      text = noctalia.tr("panel.add_window_rule"),
+      glyph = "plus",
+      enabled = ready,
+      onClick = function()
+        if addingRule == slot then
+          addingRule = nil
+        else
+          addingRule = slot
+        end
+        render()
+      end,
+    })
+  )
+  return content
+end
+local function slotsContent()
+  local content = {}
+  for _, slot in ipairs(slotOrder) do
+    local name, id = allocationName(slot, "")
+    local expanded = expandedSlot == slot
+    local count = 0
+    for key in pairs(status.selections or {}) do
+      local use, app = Allocation.destination(key)
+      if use == slot and app then
+        count += 1
+      end
+    end
+    local heading = {
+      ui.row({ gap = 12, align = "center" }, {
+        ui.column({ gap = 5, flexGrow = 1 }, {
+          ui.label({
+            text = labels[slot] or slot,
+            fontSize = 16,
+            fontWeight = "bold",
+            maxLines = 1,
+          }),
+          ui.label({
+            text = name,
+            fontSize = 13,
+            color = id and "primary" or "on_surface/0.55",
+            maxLines = 1,
+          }),
+        }),
+        ui.label({
+          text = count > 0 and noctalia.trp("panel.window_rule_count", count) or "",
+          fontSize = 12,
+          color = "on_surface/0.55",
+        }),
+        ui.glyph({
+          name = expanded and "chevron-up" or "chevron-down",
+          size = 20,
+          color = "on_surface/0.7",
+        }),
+      }),
+    }
+    local card = {
+      ui.column({
+        key = "slot-toggle-" .. slot,
+        padding = 14,
+        radius = 10,
+        onClick = function()
+          expandedSlot = not expanded and slot or nil
+          rulesExpanded, addingRule = false, nil
+          targetApplication, status.plan_token = "", nil
+          render()
+        end,
+      }, heading),
+    }
+    if expanded then
+      local content = {
+        ui.separator({ thickness = 1, color = "outline_variant/0.5" }),
+        ui.label({
+          key = "slot-description-" .. slot,
+          text = noctalia.tr("slot_descriptions." .. slot:gsub("%.", "_")),
+          fontSize = 13,
+          color = "on_surface/0.75",
+          maxLines = 4,
+        }),
+        ui.button({
+          key = "slot-documentation-" .. slot,
+          text = noctalia.tr("panel.umbriel_documentation"),
+          glyph = "external-link",
+          variant = "ghost",
+          contentAlign = "start",
+          enabled = noctalia.commandExists("xdg-open"),
+          tooltip = noctalia.tr("panel.open_umbriel_documentation"),
+          onClick = function()
+            noctalia.runAsync({
+              "xdg-open",
+              "https://docs.noctalia.dev/umbriel/" .. slotDocumentation[slot],
+            })
+          end,
+        }),
+        ui.label({
+          text = noctalia.tr("panel.default_allocation"),
+          fontSize = 11,
+          fontWeight = "bold",
+          color = "on_surface/0.55",
+        }),
+        allocationActions(slot, "", ""),
+      }
+      local example = Allocation.example(slot)
+      if example then
+        local available = model.effects[example] ~= nil
+        local event = slot:sub(11)
+        table.insert(
+          content,
+          ui.column({ gap = 6, padding = 12, radius = 8, fill = "surface_container/0.6" }, {
+            ui.label({
+              text = noctalia.tr("examples." .. event .. ".name"),
+              fontSize = 14,
+              fontWeight = "bold",
+              color = "primary",
+            }),
+            ui.label({
+              text = noctalia.tr("examples." .. event .. ".description"),
+              fontSize = 12,
+              color = "on_surface/0.65",
+              maxLines = 3,
+            }),
+            ui.button({
+              key = "slot-example-" .. slot,
+              text = noctalia.tr("panel.try_example"),
+              glyph = "sparkles",
+              enabled = available and not status.busy and not status.pending,
+              tooltip = not available and noctalia.tr("panel.example_unavailable") or nil,
+              onClick = function()
+                assignmentRequest("choose", slot, example, nil, nil, "")
+              end,
+            }),
+          })
+        )
+      end
+      if slot:match("^animation%.") and id and id ~= "@off" then
+        local duration = durationDraft[slot]
+          or (status.settings or {})[slot .. ".duration_ms"]
+          or 200
+        local curve = curveDraft[slot] or (status.settings or {})[slot .. ".curve"]
+        if not table.find(Allocation.durationCurves, curve) then
+          curve = "easeoutcubic"
+        end
+        local curveOptions = {}
+        for _, name in ipairs(Allocation.durationCurves) do
+          table.insert(curveOptions, noctalia.tr("panel.curve_" .. name))
+        end
+        table.insert(
+          content,
+          ui.row({ gap = 8, align = "center" }, {
+            ui.label({ text = noctalia.tr("panel.curve_override"), width = 180 }),
+            ui.select({
+              key = "curve-" .. slot,
+              options = curveOptions,
+              selectedIndex = table.find(Allocation.durationCurves, curve) - 1,
+              flexGrow = 1,
+              enabled = not status.busy and not status.pending,
+              onChange = function(value)
+                curveDraft[slot] = Allocation.durationCurves[(tonumber(value) or 0) + 1]
+                render()
+              end,
+            }),
+          })
+        )
+        table.insert(
+          content,
+          ui.row({ gap = 8, align = "center" }, {
+            ui.label({
+              text = noctalia.tr("panel.duration_value", { duration = duration }),
+              width = 180,
+            }),
+            ui.slider({
+              key = "duration-" .. slot,
+              min = 1,
+              max = 10000,
+              step = 1,
+              value = duration,
+              flexGrow = 1,
+              enabled = not status.busy and not status.pending,
+              onChange = function(value)
+                durationDraft[slot] = tonumber(value)
+                render()
+              end,
+            }),
+            ui.button({
+              key = "save-duration-" .. slot,
+              text = noctalia.tr("panel.apply"),
+              tooltip = noctalia.tr("panel.duration_help"),
+              enabled = (durationDraft[slot] ~= nil or curveDraft[slot] ~= nil)
+                and not status.busy
+                and not status.pending,
+              onClick = function()
+                durationDraft[slot], curveDraft[slot] = nil, nil
+                assignmentRequest("timing", slot, nil, duration, curve, "")
+              end,
+            }),
+          })
+        )
+      end
+      if slot == "effects.border" or slot == "effects.window" then
+        table.insert(content, ui.separator({ thickness = 1, color = "outline_variant/0.5" }))
+        table.insert(
+          content,
+          ui.button({
+            key = "rules-toggle-" .. slot,
+            text = noctalia.tr("panel.window_rules"),
+            glyph = rulesExpanded and "chevron-up" or "chevron-down",
+            variant = "ghost",
+            contentAlign = "start",
+            onClick = function()
+              rulesExpanded = not rulesExpanded
+              addingRule = nil
+              render()
+            end,
+          })
+        )
+        if rulesExpanded then
+          table.insert(content, ui.column({ gap = 10, padding = 4 }, windowRules(slot)))
+        end
+      elseif slot:match("^animation%.windows_") then
+        table.insert(
+          content,
+          ui.label({
+            text = noctalia.tr("panel.animation_rules_unavailable"),
+            color = "on_surface/0.55",
+            fontSize = 12,
+            maxLines = 2,
+          })
+        )
+      end
+      table.insert(
+        card,
+        ui.column(
+          { key = "slot-options-" .. slot, gap = 12, paddingH = 14, paddingV = 12 },
+          content
+        )
+      )
+    end
+    table.insert(
+      content,
+      ui.column({
+        key = "slot-card-" .. slot,
+        radius = 10,
+        gap = 0,
+        fill = expanded and "surface_container_high/0.8" or "surface_container/0.6",
+        border = expanded and "primary/0.5" or "outline_variant/0.35",
+      }, card)
+    )
+  end
+  return content
+end
 local function renderSupport()
+  if supportView == "slots" then
+    panel.render(ui.column({ flexGrow = 1, padding = 14, gap = 12 }, {
+      supportHeader(noctalia.tr("panel.effect_slots")),
+      ui.row({ gap = 8 }, {
+        ui.button({
+          key = "browse-all",
+          text = noctalia.tr("panel.all_shaders"),
+          onClick = "browseAll",
+          enabled = not status.busy,
+        }),
+        ui.button({
+          key = "refresh-windows",
+          text = noctalia.tr("panel.refresh_windows"),
+          onClick = function()
+            request("status")
+          end,
+          enabled = not status.busy,
+        }),
+        ui.button({
+          text = noctalia.tr("panel.settings"),
+          onClick = "settings",
+          enabled = not status.busy,
+        }),
+      }),
+      ui.scroll({ flexGrow = 1, gap = 12 }, slotsContent()),
+      ui.label({
+        text = status.message or "",
+        maxLines = 4,
+        color = status.ok == false and "error" or "on_surface",
+      }),
+      ui.row({ gap = 8 }, {
+        ui.button({
+          text = noctalia.tr("panel.undo"),
+          onClick = "undo",
+          enabled = status.can_undo == true and not status.busy and not status.pending,
+        }),
+        ui.button({
+          text = noctalia.tr("panel.restore_original"),
+          onClick = "restore",
+          enabled = status.can_restore == true and not status.busy and not status.pending,
+        }),
+        ui.button({
+          text = noctalia.tr("panel.recover"),
+          onClick = "recover",
+          visible = status.pending == true,
+          enabled = not status.busy,
+        }),
+      }),
+    }))
+    return
+  end
   if supportView == "active" then
     local content = {}
     for slot, id in pairs(status.selections or {}) do
-      local effect = model.effects[id]
-      local use = slot
+      local effect = id == "@default" and { name = noctalia.tr("panel.default") }
+        or id == "@off" and { name = noctalia.tr("panel.no_effect") }
+        or model.effects[id]
+      local use, app = Allocation.destination(slot)
       table.insert(
         content,
         ui.row({ gap = 8, align = "center" }, {
           ui.label({
-            text = (labels[use] or use)
+            text = (app and app .. " · " or "")
+              .. (labels[use] or use)
               .. "\n"
               .. (effect and effect.name or (noctalia.tr("panel.withdrawn", { id = id }))),
             maxLines = 3,
@@ -747,7 +1340,7 @@ local function renderSupport()
             onClick = function()
               local serial = (noctalia.state.get("request_serial") or 0) + 1
               noctalia.state.set("request_serial", serial)
-              noctalia.state.set("request", { serial = serial, action = "remove", slot = use })
+              noctalia.state.set("request", { serial = serial, action = "remove", slot = slot })
             end,
           }),
         })
@@ -929,16 +1522,17 @@ render = function()
     and type(status.plan_token) == "string"
     and status.ok == true
     and status.effect_id == chosen
-    and status.slot == chosenSlot
+    and status.slot == Allocation.key(chosenSlot, targetApplication)
   local recipeReady, uses, useIndex = false, {}, 1
   if effect then
-    for index, use in ipairs(effect.uses or {}) do
+    local available = slotFilter and { slotFilter } or effect.uses or {}
+    for index, use in ipairs(available) do
       table.insert(uses, labels[use] or use)
       if use == chosenSlot then
         useIndex = index
       end
     end
-    chosenSlot = (effect.uses or {})[useIndex]
+    chosenSlot = available[useIndex]
     if chosenSlot then
       local selector = string.sub(chosenSlot, 1, 10) == "animation." and chosenSlot .. ".effect"
         or chosenSlot
@@ -971,14 +1565,14 @@ render = function()
         text = galleryMode == "families" and noctalia.tr("panel.all_shaders")
           or noctalia.tr("panel.families"),
         onClick = "toggleGallery",
-        visible = browsing and familyId == nil,
+        visible = browsing and familyId == nil and not slotFilter,
         enabled = ready,
         variant = "ghost",
       }),
       ui.button({
         key = "active",
-        text = noctalia.tr("panel.active"),
-        onClick = "activeSelections",
+        text = noctalia.tr("panel.effect_slots"),
+        onClick = "effectSlots",
         enabled = ready,
         variant = "ghost",
       }),
@@ -1030,6 +1624,20 @@ render = function()
       }),
     })
   )
+  if slotFilter then
+    table.insert(
+      root,
+      ui.label({
+        key = "assignment-context",
+        text = noctalia.tr("panel.assignment_context", {
+          target = targetApplication ~= "" and targetApplication
+            or noctalia.tr("panel.global_defaults"),
+          slot = labels[slotFilter] or slotFilter,
+        }),
+        maxLines = 2,
+      })
+    )
+  end
   local content
   if browsing and family then
     content = familyContent(family)
@@ -1269,6 +1877,13 @@ end
 noctalia.state.watch("status", function(value)
   if type(value) == "table" then
     status = value
+    for slot, applications in pairs(ruleDrafts) do
+      for app in pairs(applications) do
+        if (value.selections or {})[Allocation.key(slot, app)] then
+          applications[app] = nil
+        end
+      end
+    end
     if not value.busy and pendingAction then
       if value.ok ~= false then
         if pendingAction == "choose-family" then
@@ -1284,6 +1899,13 @@ noctalia.state.watch("status", function(value)
         elseif pendingAction == "restore" or pendingAction == "recover" then
           notice = noctalia.tr("panel.original_look_restored")
         end
+      end
+      if
+        value.ok ~= false
+        and slotFilter
+        and (pendingAction == "choose" or pendingAction == "apply")
+      then
+        supportView = "slots"
       end
       pendingAction = nil
     end
@@ -1332,6 +1954,18 @@ function onOpen(_context)
     request(supportView == "diagnostics" and "diagnostics" or "status", nil)
   end
 end
+function effectSlots()
+  supportView = "slots"
+  durationDraft, curveDraft = {}, {}
+  status.plan_token = nil
+  render()
+end
+function browseAll()
+  supportView, slotFilter, targetApplication = nil, nil, ""
+  browsing, details, familyId = true, false, nil
+  galleryMode = "shaders"
+  render()
+end
 function browse()
   if browsing and familyId then
     familyId = nil
@@ -1373,6 +2007,9 @@ function clearFilters()
   render()
 end
 function chooseUse(index)
+  if slotFilter then
+    return
+  end
   if status.busy then
     return
   end
@@ -1460,7 +2097,14 @@ function troubleshoot()
   end
 end
 function supportBack()
-  supportView = supportView == "diagnostics" and diagnosticReturn or nil
+  if supportView == "diagnostics" then
+    supportView = diagnosticReturn
+  elseif supportView == "slots" then
+    browseAll()
+    return
+  else
+    supportView = "slots"
+  end
   supportNotice = nil
   render()
 end

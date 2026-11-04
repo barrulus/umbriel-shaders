@@ -103,13 +103,16 @@ local toml=require('lib/vendor/tinytoml.luau')
 local function config(path,depth)
   assert((depth or 0)<32,'Fixture config cycle')
   local data=toml.parse(assert(F.files[path],'Missing fixture config '..path),{load_from_string=true})
-  local result={presets={},pools={},defaults={}}
+  local result={presets={},pools={},defaults={},rules={}}
   for _,include in ipairs(data.include and data.include.files or {}) do
     local parent=config(include,(depth or 0)+1)
     for k,v in pairs(parent.presets) do result.presets[k]=v end
     for k,v in pairs(parent.pools) do result.pools[k]=v end
     for k,v in pairs(parent.defaults) do result.defaults[k]=v end
+    for _,rule in ipairs(parent.rules) do table.insert(result.rules,rule) end
   end
+  if data.window_rule and #data.window_rule==0 then result.rules={} end
+  for _,rule in ipairs(data.window_rule or {}) do table.insert(result.rules,rule) end
   for k,v in pairs(data.effects and data.effects.preset or {}) do result.presets[k]=v end
   for k,v in pairs(data.effects and data.effects.pool or {}) do result.pools[k]=v end
   for _,kind in ipairs({'cursor','border','window','screen'}) do if data.effects and data.effects[kind]~=nil then result.defaults[kind]=data.effects[kind] end end
@@ -119,14 +122,28 @@ local function key(kind,target) return kind..':'..target end
 local targets={{kind='cursor',target=''}, {kind='window',target='42'}, {kind='border',target='42'}, {kind='screen',target='Display with/slash'}}
 function F.report()
   local current=config(F.active)
-  local presets,pools,owners={}, {}, {{type='window',id='42',slots={}},{type='output',name='Display with/slash',slots={}}}
-  for name,d in pairs(current.presets) do table.insert(presets,{name=name,kind=d.kind,state=(F.fail.compile==name or (F.fail.shader and (F.files[d.shader] or ''):find(F.fail.shader,1,true))) and 'failed' or 'compiled'}) end
+  local presets,pools,owners={}, {}, {{type='window',id='42',app_id=F.app_id or 'org.example.App',slots={}},{type='output',name='Display with/slash',slots={}}}
+  for name,d in pairs(current.presets) do table.insert(presets,{name=name,kind=d.kind,state=(F.fail.compile==name or (F.fail.shader and (F.files[d.shader] or ''):find(F.fail.shader,1,true))) and 'failed' or (F.unreferenced and F.unreferenced[name]) and 'unreferenced' or 'compiled'}) end
   for name,d in pairs(current.pools) do local members={}; for _,member in ipairs(d.choose) do table.insert(members,{name=member}) end; table.insert(pools,{name=name,members=members}) end
   local cursor
   for _,t in ipairs(targets) do
     local v=F.runtime[key(t.kind,t.target)] or {source='default',pool='',name='',suppressed=false}
     v=decode(encode(v))
-    if v.source~='runtime' then v.name=current.defaults[t.kind] or '' end
+    if v.source~='runtime' then
+      v.name=current.defaults[t.kind] or ''
+      if t.kind=='window' or t.kind=='border' then
+        for _,rule in ipairs(current.rules) do
+          local match=rule.match or {}
+          -- This fixture models exact literal app-ID expressions and focus rules;
+          -- it is not a second implementation of Umbriel's regex engine.
+          local app=match.app_id
+          local matches=not app or app=='.*' or app:sub(2,-2):gsub('\\(.)','%1')==owners[1].app_id
+          matches=matches and (match.is_focused==nil or match.is_focused==(F.focused or false))
+          if matches and rule[t.kind..'_effect']~=nil then v.name=rule[t.kind..'_effect']; v.source='rule' end
+        end
+      end
+      if v.name=='off' then v.name='' end
+    end
     if t.kind=='cursor' then cursor=v elseif t.kind=='screen' then owners[2].slots.screen=v else owners[1].slots[t.kind]=v end
   end
   return {presets=presets,pools=pools,cursor=cursor,owners=owners}

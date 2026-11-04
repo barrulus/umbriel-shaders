@@ -89,3 +89,49 @@ review, apply, undo, choose, restore, and disable/re-enable passed. Umbriel repo
 GPU compilation of the Diya Lights border and its window overlay. The original
 configuration was unchanged, and re-enabling recognized the persisted selection.
 No Fedora live session was available; Fedora uses the same source plugin and CLI.
+
+
+## Effect allocation coverage
+
+`tests/luau/allocations.luau` exercises application includes loaded before the
+original configuration, exact app-ID regex escaping, per-field rule precedence,
+focus-dependent rules, global defaults, explicit off versus inheritance, external
+runtime overrides and suppression, duration/curve overrides (including spring rejection), local refresh, generation
+fingerprint checks, failed shader rollback, migration of legacy plugin-owned
+runtime selections, Undo, and removal/Restore without the source catalogue.
+The host fixture models literal app-ID expressions and focus matching; it does
+not implement Umbriel's full regex engine. Production regex parsing and the
+include syntax were additionally checked using `umbriel config validate` against
+configuration files emitted by the actual plugin modules.
+
+The panel fixture covers collapsed slot cards, exclusive expansion, nested window
+rules, adding multiple applications without duplicates, removing draft and saved
+assignments, compatible shader filtering, explicit application targets, reported
+source and suppression, duration/curve controls and disabled actions during recovery. It does not
+prove native panel layout or GPU rendering. Live selection inspection is an
+explicitly refreshed snapshot; winning-rule provenance and per-application
+animation settings are not currently supplied by Umbriel.
+
+Unreferenced shader presets are accepted as saved assignments. GPU verification
+is deferred until a shader becomes reachable; a reported compilation failure
+still rolls back the operation.
+
+
+## Community animation examples
+
+`tests/luau/examples.luau` covers all five additional animation targets, native
+Default, metadata-driven selection, dimming activation, timing changes, Undo,
+Restore and incompatible destinations. Installed examples remain manageable
+without a source checkout. `tests/catalogue_checkout.py` also checks the real
+community entries' exact `uses` and derived activation recipes.
+
+Example shader code lives only in `community-umbriel-shaders/animation/`. The
+plugin maps slots to canonical catalogue IDs and does not inject private entries
+or bypass catalogue asset verification. Previous plugin-generated copies remain
+ordinary installed assets, preserving existing selections and Undo history.
+
+The community catalogue unit tests and generator validate the `example` tag and
+the bounded, slot-specific `dim` setting. Community installation validation checks
+all installation examples and the combined preset library with real Umbriel.
+The PNG previews are explicitly labelled CPU illustrations, not live captures;
+GPU compilation and visual testing on the real animation targets remain separate.

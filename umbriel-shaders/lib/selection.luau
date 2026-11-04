@@ -46,14 +46,14 @@ local function number(v, low, high, integer)
   )
 end
 function M.setting(key, v)
-  local function selector()
+  local function selector(allowEmpty)
     assert(
-      type(v) == "string" and #v > 0 and #v <= 128 and not v:find("%z"),
+      type(v) == "string" and (allowEmpty or #v > 0) and #v <= 128 and not v:find("%z"),
       noctalia.tr("selection.invalid_effect_selector")
     )
   end
   if key:match("^effects%.") and M.slot(key) then
-    selector()
+    selector(true)
     return
   end
   if key == "animation.enabled" then
@@ -69,13 +69,15 @@ function M.setting(key, v)
   if field == "enabled" then
     assert(type(v) == "boolean", noctalia.tr("selection.expected_animation_flag"))
   elseif field == "effect" then
-    selector()
+    selector(true)
   elseif field == "duration_ms" then
     number(v, 1, 10000, true)
   elseif
     field == "scale" and (event == "windows_in" or event == "windows_out" or event == "scratchpad")
   then
     number(v, event == "scratchpad" and 0 or 0.1, 1)
+  elseif field == "dim" and (event == "dim_unfocused" or event == "scratchpad") then
+    number(v, 0, 1)
   elseif field == "curve" then
     assert(curves[v], noctalia.tr("selection.unsupported_animation_curve"))
   elseif field == "style" then

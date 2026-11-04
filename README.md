@@ -1,7 +1,7 @@
 # Umbriel Shaders
 
-Browse community shaders and apply individual effects or coordinated families to
-Umbriel from Noctalia. The plugin is entirely Luau and uses the existing `umbriel`
+Assign community shaders to effect slots or applications, and apply coordinated
+families to Umbriel from Noctalia. The plugin is entirely Luau and uses the existing `umbriel`
 command; there is no helper to build or install.
 
 ## Install for testing

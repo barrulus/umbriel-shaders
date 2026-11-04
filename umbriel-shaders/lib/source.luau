@@ -429,7 +429,9 @@ function Source:resolve(bindings, base, library, compare, installedLibraries, in
   end
   for _, slot in ipairs(U.keys(bindings)) do
     local b = bindings[slot]
-    visit(b.id, b.name, b.kind, 0)
+    if b.id ~= "@off" and b.id ~= "@default" then
+      visit(b.id, b.name, b.kind, 0)
+    end
   end
   result.presets = U.keys(selected)
   return result
