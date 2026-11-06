@@ -1146,9 +1146,13 @@ local function slotsContent()
         )
       end
       if slot:match("^animation%.") and id and id ~= "@off" then
-        local duration = durationDraft[slot]
-          or (status.settings or {})[slot .. ".duration_ms"]
-          or 200
+        local savedDuration = (status.settings or {})[slot .. ".duration_ms"] or 200
+        local durationText = durationDraft[slot] or tostring(savedDuration)
+        local duration = tonumber(durationText)
+        local validDuration = durationText:match("^%s*%d+%s*$") ~= nil
+          and duration ~= nil
+          and duration >= 1
+          and duration <= 10000
         local curve = curveDraft[slot] or (status.settings or {})[slot .. ".curve"]
         if not table.find(Allocation.durationCurves, curve) then
           curve = "easeoutcubic"
@@ -1178,19 +1182,17 @@ local function slotsContent()
           content,
           ui.row({ gap = 8, align = "center" }, {
             ui.label({
-              text = noctalia.tr("panel.duration_value", { duration = duration }),
+              text = noctalia.tr("panel.duration_override"),
               width = 180,
             }),
-            ui.slider({
-              key = "duration-" .. slot,
-              min = 1,
-              max = 10000,
-              step = 1,
-              value = duration,
+            ui.input({
+              -- Inputs retain their text across renders; reseed when the saved value changes.
+              key = "duration-" .. slot .. "-" .. tostring(savedDuration),
+              value = durationText,
               flexGrow = 1,
               enabled = not status.busy and not status.pending,
               onChange = function(value)
-                durationDraft[slot] = tonumber(value)
+                durationDraft[slot] = value
                 render()
               end,
             }),
@@ -1199,15 +1201,29 @@ local function slotsContent()
               text = noctalia.tr("panel.apply"),
               tooltip = noctalia.tr("panel.duration_help"),
               enabled = (durationDraft[slot] ~= nil or curveDraft[slot] ~= nil)
+                and validDuration
                 and not status.busy
                 and not status.pending,
               onClick = function()
+                if not validDuration or status.busy or status.pending then
+                  return
+                end
                 durationDraft[slot], curveDraft[slot] = nil, nil
                 assignmentRequest("timing", slot, nil, duration, curve, "")
               end,
             }),
           })
         )
+        if not validDuration then
+          table.insert(
+            content,
+            ui.label({
+              text = noctalia.tr("panel.duration_invalid"),
+              color = "error",
+              fontSize = 12,
+            })
+          )
+        end
       end
       if slot == "effects.border" or slot == "effects.window" then
         table.insert(content, ui.separator({ thickness = 1, color = "outline_variant/0.5" }))

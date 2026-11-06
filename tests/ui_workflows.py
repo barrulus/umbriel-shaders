@@ -213,10 +213,33 @@ check(node("slot-options-effects.border") == nil and node("rule-add-effects.bord
 noctalia.state.set("status", { ok = true, managed = true,
   selections = { ["animation.windows_in"] = "animation/effect-2" },
   settings = { ["animation.windows_in.duration_ms"] = 450 } })
-check(node("duration-animation.windows_in").props.value == 450, "Timing slider ignored saved duration")
-node("duration-animation.windows_in").props.onChange(680)
+local durationKey = "duration-animation.windows_in-450"
+check(node(durationKey).kind == "input" and node(durationKey).props.value == "450", "Timing input ignored saved duration")
+node("curve-animation.windows_in").props.onChange(0)
+node("save-duration-animation.windows_in").props.onClick()
+check(values.request.duration_ms == 450 and values.request.curve == "linear", "Curve-only edit lost saved duration")
+for _, text in ipairs({ "", "abc", "0", "-1", "10001", "250.5", "nan", "inf", "1e3" }) do
+  node(durationKey).props.onChange(text)
+  check(node(durationKey).props.value == text, "Invalid draft was discarded while typing")
+  check(not node("save-duration-animation.windows_in").props.enabled, "Invalid duration enabled Apply: " .. text)
+  local previous = values.request
+  node("save-duration-animation.windows_in").props.onClick()
+  check(values.request == previous, "Invalid duration submitted a timing request")
+end
+for _, text in ipairs({ "1", "10000", "250", " 300 " }) do
+  node(durationKey).props.onChange(text)
+  check(node("save-duration-animation.windows_in").props.enabled, "Valid duration disabled Apply: " .. text)
+  node("save-duration-animation.windows_in").props.onClick()
+  check(values.request.duration_ms == tonumber(text), "Typed duration was not saved exactly")
+end
+node(durationKey).props.onChange("680")
 node("save-duration-animation.windows_in").props.onClick()
 check(values.request.action == "timing" and values.request.duration_ms == 680 and values.request.curve == "easeoutcubic" and values.request.slot == "animation.windows_in", "Duration change did not reach its animation slot")
+noctalia.state.set("status", { ok = true, managed = true,
+  selections = { ["animation.windows_in"] = "animation/effect-2" },
+  settings = { ["animation.windows_in.duration_ms"] = 300 } })
+check(node("duration-animation.windows_in-300").props.value == "300" and node(durationKey) == nil,
+  "Saved duration change did not reseed the input")
 node("slot-toggle-animation.windows_in").props.onClick()
 check(node("slot-options-animation.windows_in") == nil, "Expanded slot did not collapse on a second click")
 for _,event in ipairs({"overview","scratchpad","border","dim_unfocused","layers"}) do
