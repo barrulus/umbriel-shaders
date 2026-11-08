@@ -1,9 +1,11 @@
 -- SPDX-License-Identifier: MIT
 local U = require("./util.luau")
+local A = require("./async.luau")
 local M = {}
 function M.flatten(value, prefix, result)
   result = result or {}
   for key, v in pairs(value) do
+    A.checkpoint()
     assert(
       not key:find(".", 1, true),
       noctalia.tr("graph.quoted_dotted_setting_key_is_not_a_nested_table")

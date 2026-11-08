@@ -51,7 +51,7 @@ function M.markers(report)
       table.insert(out, preset.name)
     end
   end
-  table.sort(out)
+  U.sort(out)
   return out
 end
 function M.stamp(report)

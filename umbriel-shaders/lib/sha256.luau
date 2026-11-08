@@ -123,7 +123,7 @@ return function(input)
     for i, v in ipairs({ a, b, c, d, e, f, g, h }) do
       H[i] = (H[i] + v) % 4294967296
     end
-    if offset % 4096 == 1 then
+    if offset % 256 == 1 then
       A.checkpoint()
     end
   end

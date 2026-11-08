@@ -1,15 +1,50 @@
 -- SPDX-License-Identifier: MIT
+local A = require("./lib/async.luau")
+local U = require("./lib/util.luau")
+local renderRevision, buildingRevision = 0, 0
+local cancelled = {}
+local hostUi, hostPanel = ui, panel
+local function renderCheckpoint()
+  A.checkpoint()
+  if buildingRevision ~= renderRevision then
+    error(cancelled)
+  end
+end
+local ui = setmetatable({}, {
+  __index = function(self, name)
+    local constructor = function(...)
+      renderCheckpoint()
+      return hostUi[name](...)
+    end
+    rawset(self, name, constructor)
+    return constructor
+  end,
+})
+local panel = setmetatable({
+  render = function(tree)
+    -- Native tree conversion cannot yield. Keep trees paginated and separate
+    -- conversion from the work spent constructing them.
+    A.pause()
+    renderCheckpoint()
+    hostPanel.render(tree)
+  end,
+}, { __index = hostPanel })
+local shared = require("./lib/shared.luau").new()
 local Allocation = require("./lib/allocation.luau")
 local opened = false
-local status = noctalia.state.get("status") or {}
-local catalogue = noctalia.state.get("catalogue") or {}
-local catalogueStatus = noctalia.state.get("catalogue_status") or {}
+A.setWakeup(function(pending)
+  hostPanel.setNeedsFrameTick(pending and opened)
+end)
+local status = shared.get("status") or {}
+local catalogue = shared.get("catalogue") or {}
+local catalogueStatus = shared.get("catalogue_status") or {}
 local catalogueModel = require("./lib/catalogue.luau")
 local model = catalogueModel.index(catalogue)
-local previewWanted, previewAttempted = {}, {}
+local previewWanted, previewAttempted, previewPlanned = {}, {}, {}
 local chosen, chosenSlot = "cursor/glow", "effects.cursor"
 local browsing, details, comparing = true, false, false
 local query, tag = "", ""
+local tagOptions = {}
 local galleryMode, familyId = "shaders", nil
 local familyChoices = {}
 local searchRevision = 0
@@ -65,13 +100,50 @@ local fields = {
   scale = noctalia.tr("panel.scale"),
 }
 local render
+local pages = {}
+local function page(name, items, size)
+  size = size or 24
+  local number = math.max(1, math.min(pages[name] or 1, math.ceil(#items / size)))
+  pages[name] = number
+  local subset = {}
+  for i = (number - 1) * size + 1, math.min(number * size, #items) do
+    table.insert(subset, items[i])
+  end
+  local navigation
+  if #items > size then
+    navigation = ui.row({ key = "pages-" .. name, gap = 8 }, {
+      ui.button({
+        key = "previous-" .. name,
+        text = noctalia.tr("panel.previous_page"),
+        enabled = number > 1,
+        onClick = function()
+          pages[name] = number - 1
+          render()
+        end,
+      }),
+      ui.label({
+        text = noctalia.tr("panel.page_count", { page = number, pages = math.ceil(#items / size) }),
+      }),
+      ui.button({
+        key = "next-" .. name,
+        text = noctalia.tr("panel.next_page"),
+        enabled = number * size < #items,
+        onClick = function()
+          pages[name] = number + 1
+          render()
+        end,
+      }),
+    })
+  end
+  return subset, navigation
+end
 local supportView, supportNotice = "slots", nil
 local targetApplication, slotFilter = "", nil
 local durationDraft, curveDraft = {}, {}
 local expandedSlot, rulesExpanded = nil, false
 local ruleDrafts, addingRule, applicationChoice = {}, nil, {}
 local diagnosticReturn = nil
-local diagnostics = noctalia.state.get("diagnostics") or {}
+local diagnostics = shared.get("diagnostics") or {}
 local diagnosticSection = 1
 
 local function request(action, token, compare)
@@ -172,9 +244,10 @@ local function preview(effect, width, height)
     model.effects[effect.id]
     and not (catalogue.mode == "local" and localPreview.image)
     and not previewAttempted[effect.id]
+    and not previewPlanned[effect.id]
     and #previewWanted < 24
   then
-    previewAttempted[effect.id] = true
+    previewPlanned[effect.id] = true
     table.insert(previewWanted, effect.id)
   end
   local path = localPreview.image
@@ -233,6 +306,7 @@ local function isActive(effect)
     return false
   end
   for _, id in pairs(status.selections or {}) do
+    A.checkpoint()
     if id == effect.id then
       return true
     end
@@ -270,11 +344,12 @@ end
 local function browserContent(records, ignoreFilters, slot)
   local children, row, count = {}, {}, 0
   for _, effect in ipairs(records or catalogue.effects or {}) do
+    A.checkpoint()
     if
       (ignoreFilters or matches(effect)) and (not slotFilter or contains(effect.uses, slotFilter))
     then
       count += 1
-      if count <= visibleLimit then
+      if count > visibleLimit - 24 and count <= visibleLimit then
         local entry = effect
         table.insert(
           row,
@@ -321,12 +396,22 @@ local function browserContent(records, ignoreFilters, slot)
     table.insert(row, ui.spacer({ flexGrow = 1 }))
     table.insert(children, ui.row({ gap = 12, align = "start" }, row))
   end
+  if visibleLimit > 24 then
+    table.insert(
+      children,
+      ui.button({
+        key = "previous-page",
+        text = noctalia.tr("panel.previous_page"),
+        onClick = "previousPage",
+      })
+    )
+  end
   if count > visibleLimit then
     table.insert(
       children,
       ui.button({
         key = "show-more",
-        text = noctalia.tr("panel.show_more", { visible = visibleLimit, total = count }),
+        text = noctalia.tr("panel.next_page"),
         onClick = "showMore",
       })
     )
@@ -376,6 +461,7 @@ end
 local function familyGallery()
   local children, row, count = {}, {}, 0
   for _, family in ipairs(catalogue.families or {}) do
+    A.checkpoint()
     local kindMatch = kinds[kindIndex] == "all"
     for _, effect in ipairs(familyMembers(family)) do
       if effect.kind == kinds[kindIndex] then
@@ -397,7 +483,7 @@ local function familyGallery()
       and (query == "" or string.find(haystack, string.lower(query), 1, true))
     then
       count += 1
-      if count <= visibleLimit then
+      if count > visibleLimit - 24 and count <= visibleLimit then
         local entry = family
         table.insert(
           row,
@@ -440,10 +526,20 @@ local function familyGallery()
     table.insert(row, ui.spacer({ flexGrow = 1 }))
     table.insert(children, ui.row({ gap = 12 }, row))
   end
+  if visibleLimit > 24 then
+    table.insert(
+      children,
+      ui.button({
+        key = "previous-page",
+        text = noctalia.tr("panel.previous_page"),
+        onClick = "previousPage",
+      })
+    )
+  end
   if count > visibleLimit then
     table.insert(
       children,
-      ui.button({ text = noctalia.tr("panel.show_more_families"), onClick = "showMore" })
+      ui.button({ text = noctalia.tr("panel.next_page"), onClick = "showMore" })
     )
   end
   if count == 0 then
@@ -555,7 +651,8 @@ local function familyContent(family)
         end,
       })
     )
-    local cards = browserContent(members, true, use)
+    local selectedMember = model.effects[selected]
+    local cards = selectedMember and { preview(selectedMember, 240, 120) } or {}
     for _, card in ipairs(cards) do
       table.insert(content, card)
     end
@@ -632,7 +729,8 @@ local function technicalDetails(effect, hasPlan)
       ui.label({ text = noctalia.tr("panel.what_will_change"), fontWeight = "bold" })
     )
     local changed = 0
-    for _, change in ipairs(status.changes or {}) do
+    local changes, changeNavigation = page("changes", status.changes or {})
+    for _, change in ipairs(changes) do
       if change.before ~= change.after then
         changed += 1
         table.insert(
@@ -645,6 +743,9 @@ local function technicalDetails(effect, hasPlan)
           })
         )
       end
+    end
+    if changeNavigation then
+      table.insert(content, changeNavigation)
     end
     if changed == 0 then
       table.insert(
@@ -662,7 +763,8 @@ local function technicalDetails(effect, hasPlan)
         })
       )
       if comparing then
-        for _, copy in ipairs(status.local_copies) do
+        local copies, copyNavigation = page("copies", status.local_copies)
+        for _, copy in ipairs(copies) do
           local result = copy.comparison_error
               and (noctalia.tr("panel.comparison_error", { error = copy.comparison_error }))
             or noctalia.tr("panel.local_dependency_not_compared")
@@ -675,6 +777,9 @@ local function technicalDetails(effect, hasPlan)
             content,
             ui.label({ text = copy.preset .. ": " .. result .. "\n" .. copy.config, maxLines = 5 })
           )
+        end
+        if copyNavigation then
+          table.insert(content, copyNavigation)
         end
       end
     end
@@ -848,6 +953,7 @@ end
 local function windowRules(slot)
   local applications, seen = {}, {}
   for _, window in ipairs(status.windows or {}) do
+    A.checkpoint()
     local app = window.app_id or ""
     if app ~= "" and pcall(Allocation.application, app) and not seen[app] then
       seen[app] = true
@@ -856,6 +962,7 @@ local function windowRules(slot)
   end
   local assigned = {}
   for key in pairs(status.selections or {}) do
+    A.checkpoint()
     local use, app = Allocation.destination(key)
     if app and use == slot then
       assigned[app] = true
@@ -868,7 +975,7 @@ local function windowRules(slot)
   for app in pairs(assigned) do
     table.insert(sorted, app)
   end
-  table.sort(sorted)
+  U.sort(sorted)
   local ready = not status.busy and not status.pending
   local content = {
     ui.label({
@@ -878,7 +985,8 @@ local function windowRules(slot)
       maxLines = 3,
     }),
   }
-  for _, app in ipairs(sorted) do
+  local shown, navigation = page("rules-" .. slot, sorted, 12)
+  for _, app in ipairs(shown) do
     local name, id = allocationName(slot, app)
     local suffix = ":" .. app
     local children = {
@@ -908,6 +1016,7 @@ local function windowRules(slot)
     }
     -- Effective values are a refreshed snapshot; keep them subordinate to the assignment.
     for _, window in ipairs(status.windows or {}) do
+      A.checkpoint()
       if window.app_id == app then
         local selected = (window.slots or {})[slot:sub(9)]
         if selected then
@@ -942,6 +1051,9 @@ local function windowRules(slot)
       }, children)
     )
   end
+  if navigation then
+    table.insert(content, navigation)
+  end
   if #sorted == 0 then
     table.insert(
       content,
@@ -952,7 +1064,7 @@ local function windowRules(slot)
       })
     )
   end
-  table.sort(applications)
+  U.sort(applications)
   local available = {}
   for _, app in ipairs(applications) do
     if not assigned[app] then
@@ -960,6 +1072,11 @@ local function windowRules(slot)
     end
   end
   if addingRule == slot then
+    local applicationNavigation
+    available, applicationNavigation = page("applications-" .. slot, available, 64)
+    if applicationNavigation then
+      table.insert(content, applicationNavigation)
+    end
     if #available > 0 then
       local selected = table.find(available, applicationChoice[slot]) or 1
       applicationChoice[slot] = available[selected]
@@ -1034,6 +1151,7 @@ local function slotsContent()
     local expanded = expandedSlot == slot
     local count = 0
     for key in pairs(status.selections or {}) do
+      A.checkpoint()
       local use, app = Allocation.destination(key)
       if use == slot and app then
         count += 1
@@ -1331,7 +1449,16 @@ local function renderSupport()
   end
   if supportView == "active" then
     local content = {}
+    local assignments = {}
     for slot, id in pairs(status.selections or {}) do
+      table.insert(assignments, { slot = slot, id = id })
+    end
+    U.sort(assignments, function(a, b)
+      return a.slot < b.slot
+    end)
+    local shown, navigation = page("active", assignments)
+    for _, assignment in ipairs(shown) do
+      local slot, id = assignment.slot, assignment.id
       local effect = id == "@default" and { name = noctalia.tr("panel.default") }
         or id == "@off" and { name = noctalia.tr("panel.no_effect") }
         or model.effects[id]
@@ -1361,6 +1488,9 @@ local function renderSupport()
           }),
         })
       )
+    end
+    if navigation then
+      table.insert(content, navigation)
     end
     if #content == 0 then
       table.insert(
@@ -1433,7 +1563,13 @@ local function renderSupport()
   local content = {}
   local selected = sections[diagnosticSection]
   if selected then
+    local lines = {}
     for line in string.gmatch(selected.text .. "\n", "(.-)\n") do
+      renderCheckpoint()
+      table.insert(lines, line)
+    end
+    local shown, navigation = page("diagnostics-" .. diagnosticSection, lines)
+    for _, line in ipairs(shown) do
       table.insert(
         content,
         ui.label({
@@ -1444,6 +1580,9 @@ local function renderSupport()
           fontFamily = diagnosticSection == 3 and "monospace" or nil,
         })
       )
+    end
+    if navigation then
+      table.insert(content, navigation)
     end
   else
     table.insert(
@@ -1516,11 +1655,11 @@ local function renderSupport()
   panel.render(ui.column({ flexGrow = 1, padding = 14, gap = 12 }, root))
 end
 
-render = function()
+local function renderNow()
   if not opened then
     return
   end
-  previewWanted = {}
+  previewWanted, previewPlanned = {}, {}
   if supportView then
     renderSupport()
     return
@@ -1668,7 +1807,12 @@ render = function()
       })
     )
     local tags, tagIndex = { noctalia.tr("panel.all_tags") }, 0
-    for index, value in ipairs(allTags()) do
+    local tagNavigation
+    tagOptions, tagNavigation = page("tags", allTags(), 64)
+    if tagNavigation then
+      table.insert(root, tagNavigation)
+    end
+    for index, value in ipairs(tagOptions) do
       table.insert(tags, "#" .. value)
       if value == tag then
         tagIndex = index
@@ -1886,11 +2030,41 @@ render = function()
   end
   panel.render(ui.column({ flexGrow = 1, padding = 14, gap = 12 }, root))
   if #previewWanted > 0 then
+    for _, id in ipairs(previewWanted) do
+      previewAttempted[id] = true
+    end
     noctalia.state.set("preview_request", { ids = previewWanted })
   end
 end
 
-noctalia.state.watch("status", function(value)
+local rendering = false
+render = function()
+  renderRevision += 1
+  if rendering or not opened then
+    return
+  end
+  rendering = true
+  A.defer(function()
+    repeat
+      buildingRevision = renderRevision
+      local ok, err = pcall(renderNow)
+      if not ok and err ~= cancelled then
+        error(err)
+      end
+    until buildingRevision == renderRevision or not opened
+  end, function(ok, err)
+    rendering = false
+    assert(ok, err)
+    if buildingRevision ~= renderRevision and opened then
+      render()
+    end
+  end)
+end
+function onFrameTick()
+  A.update()
+end
+
+shared.watch("status", function(value)
   if type(value) == "table" then
     status = value
     for slot, applications in pairs(ruleDrafts) do
@@ -1928,9 +2102,19 @@ noctalia.state.watch("status", function(value)
   end
   render()
 end)
-noctalia.state.watch("catalogue", function(value)
-  catalogue = type(value) == "table" and value or {}
-  model = catalogueModel.index(catalogue)
+shared.watch("catalogue", function(value)
+  value = type(value) == "table" and value or {}
+  local nextModel = catalogueModel.index(value)
+  catalogue, model = value, nextModel
+  local previews = shared.get("previews") or {}
+  if previews.__fingerprint == nil or previews.__fingerprint == catalogue.fingerprint then
+    for id, preview in pairs(previews) do
+      if model.effects[id] then
+        model.effects[id].local_preview = preview
+      end
+    end
+  end
+  visibleLimit = 24
   previewAttempted = {}
   familyChoices = {}
   if tag ~= "" and not contains(allTags(), tag) then
@@ -1938,33 +2122,30 @@ noctalia.state.watch("catalogue", function(value)
   end
   render()
 end)
-noctalia.state.watch("catalogue_status", function(value)
+shared.watch("catalogue_status", function(value)
   catalogueStatus = type(value) == "table" and value or {}
   render()
 end)
-noctalia.state.watch("previews", function(value)
-  for id, preview in pairs(type(value) == "table" and value or {}) do
+shared.watch("previews", function(value)
+  if
+    type(value) ~= "table"
+    or value.__fingerprint ~= nil and value.__fingerprint ~= catalogue.fingerprint
+  then
+    return
+  end
+  for id, preview in pairs(value) do
     if model.effects[id] then
       model.effects[id].local_preview = preview
     end
   end
   render()
 end)
-noctalia.state.watch("diagnostics", function(value)
+shared.watch("diagnostics", function(value)
   diagnostics = type(value) == "table" and value or {}
   render()
 end)
 function onOpen(_context)
   opened = true
-  status = noctalia.state.get("status") or status
-  catalogue = noctalia.state.get("catalogue") or catalogue
-  catalogueStatus = noctalia.state.get("catalogue_status") or catalogueStatus
-  model = catalogueModel.index(catalogue)
-  for id, preview in pairs(noctalia.state.get("previews") or {}) do
-    if model.effects[id] then
-      model.effects[id].local_preview = preview
-    end
-  end
   render()
   if not status.busy then
     request(supportView == "diagnostics" and "diagnostics" or "status", nil)
@@ -1996,6 +2177,10 @@ function toggleGallery()
   browsing, details = true, false
   render()
 end
+function previousPage()
+  visibleLimit = math.max(24, visibleLimit - 24)
+  render()
+end
 function showMore()
   visibleLimit += 24
   render()
@@ -2012,7 +2197,7 @@ function filterKind(index)
 end
 function filterTag(index)
   visibleLimit = 24
-  tag = allTags()[tonumber(index) or 0] or ""
+  tag = tagOptions[tonumber(index) or 0] or ""
   render()
 end
 function clearFilters()
@@ -2058,7 +2243,9 @@ function playRecording()
   end
 end
 function onClose()
+  renderRevision += 1
   opened = false
+  hostPanel.setNeedsFrameTick(false)
 end
 function compareLocal()
   comparing = not comparing

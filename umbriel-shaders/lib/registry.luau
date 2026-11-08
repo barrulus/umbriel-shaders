@@ -4,6 +4,7 @@ local S = require("./selection.luau")
 local A = require("./async.luau")
 local M = { repository = "https://github.com/noctalia-dev/community-umbriel-shaders" }
 local function text(v, limit)
+  A.checkpoint()
   assert(
     type(v) == "string" and #v > 0 and #v <= (limit or 2048) and not v:find("%z"),
     noctalia.tr("registry.invalid_catalogue_string")
@@ -195,6 +196,7 @@ function M.validate(r, localMode)
   end
   local visiting, seen = {}, {}
   local function visit(id, depth)
+    A.checkpoint()
     assert(
       ids[id] and not visiting[id] and depth < 64,
       noctalia.tr("registry.missing_or_cyclic_dependency")
@@ -214,11 +216,13 @@ function M.validate(r, localMode)
   end
   seen = {}
   for _, f in ipairs(r.families) do
+    A.checkpoint()
     assert(slug(f.id) and not seen[f.id], noctalia.tr("registry.invalid_family_identity"))
     seen[f.id] = true
     text(f.name)
     list(f.members)
     for _, member in ipairs(f.members) do
+      A.checkpoint()
       assert(ids[member], noctalia.tr("registry.missing_family_member"))
     end
     for _, k in ipairs({ "description", "license" }) do

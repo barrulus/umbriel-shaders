@@ -67,6 +67,7 @@ function M.build(root, cache, refresh)
       A.checkpoint()
     end
     for path in pairs(previous.files) do
+      A.checkpoint()
       if not stamps[path] then
         return false
       end
@@ -86,7 +87,7 @@ function M.build(root, cache, refresh)
     prefix = "docs/catalogue-examples/"
   end
   assert(#metadata > 0, noctalia.tr("local_source.no_local_effect_metadata_found"))
-  table.sort(metadata)
+  U.sort(metadata)
   local registry = {
     schema_version = 1,
     draft = true,

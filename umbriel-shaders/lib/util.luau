@@ -2,16 +2,56 @@
 local A = require("./async.luau")
 local sha = require("./sha256.luau")
 local toml = require("./vendor/tinytoml.luau")
+local json = require("./json.luau")
 local M = { hash = sha, limit = 1024 * 1024, marker = "umbriel-shaders-generation-" }
+function M.sort(values, less)
+  if #values <= 128 then
+    table.sort(values, less)
+    return values
+  end
+  less = less or function(a, b)
+    return a < b
+  end
+  local source, target, width = values, table.create(#values), 1
+  while width < #values do
+    for first = 1, #values, width * 2 do
+      local middle, last =
+        math.min(first + width, #values + 1), math.min(first + width * 2 - 1, #values)
+      local left, right = first, middle
+      for index = first, last do
+        if index % 128 == 1 then
+          A.checkpoint()
+        end
+        if right > last or left < middle and not less(source[right], source[left]) then
+          target[index] = source[left]
+          left += 1
+        else
+          target[index] = source[right]
+          right += 1
+        end
+      end
+    end
+    source, target, width = target, source, width * 2
+  end
+  if source ~= values then
+    for first = 1, #values, 128 do
+      A.checkpoint()
+      table.move(source, first, math.min(first + 127, #values), first, values)
+    end
+  end
+  return values
+end
 function M.keys(t)
   local result = {}
   for k in pairs(t or {}) do
+    A.checkpoint()
     table.insert(result, k)
   end
-  table.sort(result)
+  M.sort(result)
   return result
 end
 function M.copy(t)
+  A.checkpoint()
   if type(t) ~= "table" then
     return t
   end
@@ -22,6 +62,7 @@ function M.copy(t)
   return out
 end
 function M.equal(a, b)
+  A.checkpoint()
   if type(a) ~= type(b) then
     return false
   end
@@ -34,6 +75,7 @@ function M.equal(a, b)
     end
   end
   for k in pairs(b) do
+    A.checkpoint()
     if a[k] == nil then
       return false
     end
@@ -49,6 +91,9 @@ function M.json(value, depth)
     error(noctalia.tr("util.document_nesting_exceeds_limit"))
   end
   if type(value) ~= "table" then
+    if type(value) == "string" and #value > 4096 then
+      return json.encodeString(value)
+    end
     local encoded = noctalia.json.encode(value)
     if not encoded then
       error(noctalia.tr("util.cannot_encode_value"))
@@ -72,30 +117,7 @@ function M.json(value, depth)
 end
 function M.decode(raw)
   assert(type(raw) == "string" and #raw <= 4 * M.limit, noctalia.tr("util.document_exceeds_limit"))
-  local depth, quoted, escaped = 0, false, false
-  for i = 1, #raw do
-    local c = raw:sub(i, i)
-    if quoted then
-      if escaped then
-        escaped = false
-      elseif c == "\\" then
-        escaped = true
-      elseif c == '"' then
-        quoted = false
-      end
-    elseif c == '"' then
-      quoted = true
-    elseif c == "{" or c == "[" then
-      depth += 1
-      assert(depth <= 32, noctalia.tr("util.document_nesting_exceeds_limit"))
-    elseif c == "}" or c == "]" then
-      depth -= 1
-    end
-    if i % 4096 == 0 then
-      A.checkpoint()
-    end
-  end
-  return (assert(noctalia.json.decode(raw), noctalia.tr("util.invalid_json_document")))
+  return (assert(json.decode(raw), noctalia.tr("util.invalid_json_document")))
 end
 function M.token()
   return sha(
@@ -109,12 +131,14 @@ function M.relative(s)
   assert(
     type(s) == "string"
       and s ~= ""
+      and #s <= 4096
       and s:sub(1, 1) ~= "/"
       and not s:find("[%z\1-\31\\$~:]")
       and not s:find("//", 1, true),
     noctalia.tr("util.unsafe_relative_path")
   )
   for part in s:gmatch("[^/]+") do
+    A.checkpoint()
     assert(part ~= "." and part ~= "..", noctalia.tr("util.unsafe_path_component"))
   end
   assert(s:sub(-1) ~= "/", noctalia.tr("util.unsafe_path_component"))
@@ -130,6 +154,7 @@ function M.normalize(s)
   )
   local parts = {}
   for part in s:gmatch("[^/]+") do
+    A.checkpoint()
     if part == ".." then
       table.remove(parts)
     elseif part ~= "." then

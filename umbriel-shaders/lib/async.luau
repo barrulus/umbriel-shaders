@@ -1,29 +1,58 @@
 -- SPDX-License-Identifier: MIT
--- Coroutines keep transactions sequential while every host operation remains asynchronous.
+-- All jobs resumed by one host callback share its time slice, including completions.
 local M = {}
-local queue = {}
-local active = {}
+local queue, active = {}, {}
+local started
+local slice = 0.003
+local function intervalWakeup(pending)
+  noctalia.setUpdateInterval(pending and 16 or 1000)
+end
+local wakeup = intervalWakeup
+function M.setWakeup(callback)
+  wakeup = callback or intervalWakeup
+  wakeup(#queue > 0)
+end
 local function resume(thread, ...)
-  local job = active[thread]
-  if not job then
+  if not active[thread] then
     return
   end
-  job.started = os.clock()
+  local outer = started == nil
+  if outer then
+    started = os.clock()
+  end
   local result = table.pack(coroutine.resume(thread, ...))
   if not result[1] or coroutine.status(thread) == "dead" then
     active[thread] = nil
-    job.done(result[1], result[2])
+  end
+  if outer then
+    started = nil
+  end
+  if not result[1] then
+    error(result[2], 0)
   end
 end
+local function job(fn, done)
+  local thread = coroutine.create(function()
+    M.checkpoint()
+    local ok, result = pcall(fn)
+    M.checkpoint()
+    done(ok, result)
+  end)
+  active[thread] = true
+  return thread
+end
 function M.run(fn, done)
-  local thread = coroutine.create(fn)
-  active[thread] = { done = done, started = os.clock() }
-  resume(thread)
+  resume(job(fn, done))
+end
+function M.defer(fn, done)
+  table.insert(queue, job(fn, done))
+  wakeup(true)
 end
 function M.await(start)
   local thread = coroutine.running()
   local deadline = noctalia.nowMs() + 30000
   repeat
+    M.checkpoint()
     local synchronous, received = true, nil
     local accepted = start(function(...)
       if synchronous then
@@ -44,24 +73,38 @@ function M.await(start)
   until false
 end
 function M.pause()
-  noctalia.setUpdateInterval(16)
+  wakeup(true)
   table.insert(queue, coroutine.running())
   coroutine.yield()
 end
 function M.checkpoint()
-  local job = active[coroutine.running()]
-  if job and os.clock() - job.started > 0.003 then
+  if active[coroutine.running()] and started and os.clock() - started >= slice then
     M.pause()
   end
 end
 function M.update()
   local ready = queue
   queue = {}
-  for _, thread in ipairs(ready) do
-    resume(thread)
-  end
-  if #queue == 0 then
-    noctalia.setUpdateInterval(1000)
-  end
+  started = os.clock()
+  local ok, err = pcall(function()
+    for index, thread in ipairs(ready) do
+      if os.clock() - started >= slice then
+        -- Older work stays ahead of jobs that yielded or were launched this tick.
+        local pending = {}
+        for i = index, #ready do
+          table.insert(pending, ready[i])
+        end
+        for _, waiting in ipairs(queue) do
+          table.insert(pending, waiting)
+        end
+        queue = pending
+        break
+      end
+      resume(thread)
+    end
+  end)
+  started = nil
+  wakeup(#queue > 0)
+  assert(ok, err)
 end
 return M

@@ -1,4 +1,6 @@
 -- SPDX-License-Identifier: MIT
+local A = require("./async.luau")
+local U = require("./util.luau")
 local M = {}
 local order = {
   "animation.workspaces",
@@ -19,6 +21,7 @@ function M.index(catalogue)
   local model = { effects = {}, families = {}, members = {}, groups = {}, tags = {} }
   local tags = {}
   for _, effect in ipairs(catalogue.effects or {}) do
+    A.checkpoint()
     model.effects[effect.id] = effect
     for _, tag in ipairs(effect.tags or {}) do
       tags[tag] = true
@@ -27,11 +30,13 @@ function M.index(catalogue)
   for tag in pairs(tags) do
     table.insert(model.tags, tag)
   end
-  table.sort(model.tags)
+  U.sort(model.tags)
   for _, family in ipairs(catalogue.families or {}) do
+    A.checkpoint()
     model.families[family.id] = family
     local members, groups, bySlot = {}, {}, {}
     for _, id in ipairs(family.members or {}) do
+      A.checkpoint()
       local effect = model.effects[id]
       if effect then
         table.insert(members, effect)

@@ -1,5 +1,6 @@
 -- SPDX-License-Identifier: MIT
 local U = require("./util.luau")
+local A = require("./async.luau")
 local M = {}
 M.kinds = { cursor = true, border = true, window = true, screen = true, animation = true }
 M.events = {
@@ -46,6 +47,7 @@ local function number(v, low, high, integer)
   )
 end
 function M.setting(key, v)
+  A.checkpoint()
   local function selector(allowEmpty)
     assert(
       type(v) == "string" and (allowEmpty or #v > 0) and #v <= 128 and not v:find("%z"),
@@ -141,6 +143,7 @@ function M.definition(d, kind)
 end
 function M.find(records, id)
   for _, r in ipairs(records) do
+    A.checkpoint()
     if r.id == id then
       return r
     end

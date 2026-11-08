@@ -61,6 +61,7 @@ function Controller:checkGeneration(g)
     noctalia.tr("controller.incomplete_managed_generation")
   )
   for path in pairs(g.files) do
+    A.checkpoint()
     assert(
       path:sub(1, #self.root + 1) == self.root .. "/",
       noctalia.tr("controller.generation_references_foreign_files")
@@ -75,6 +76,7 @@ function Controller:checkGeneration(g)
     noctalia.tr("controller.oversized_saved_selection")
   )
   for slot, b in pairs(g.bindings) do
+    A.checkpoint()
     local use = Allocation.destination(slot)
     assert(S.slot(use), noctalia.tr("controller.invalid_saved_selection_slot"))
     if b.id ~= "@default" and b.id ~= "@off" then
@@ -129,10 +131,11 @@ function Controller:status()
       table.insert(assignments, { key = slot, slot = use, application = app, id = b.id })
     end
   end
-  table.sort(assignments, function(a, b)
+  U.sort(assignments, function(a, b)
     return a.key < b.key
   end)
   for _, owner in ipairs(report.owners or {}) do
+    A.checkpoint()
     if owner.type == "window" then
       table.insert(windows, { id = owner.id, app_id = owner.app_id or "", slots = owner.slots })
     end

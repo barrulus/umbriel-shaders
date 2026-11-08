@@ -1,4 +1,5 @@
 -- SPDX-License-Identifier: MIT
+local shared = require("./lib/shared.luau").new()
 local directory, storageError = noctalia.pluginDataDir()
 local root = directory and (directory .. "/luau-v1") or nil
 local backend = require("./lib/backend.luau").new(root)
@@ -10,18 +11,20 @@ local previewQueue, previewDone = {}, {}
 local previewResults = {}
 local run, pumpPreviews
 local function publish(value)
+  value = table.clone(value)
+  value.catalogue, value.diagnostics = nil, nil
   value.busy = busy
-  noctalia.state.set("status", value)
+  shared.set("status", value)
 end
 local function publishCatalogue(loading, message)
-  noctalia.state.set("catalogue_status", { loading = loading, error = message })
+  shared.set("catalogue_status", { loading = loading, error = message })
 end
 local function arguments(action, request)
   return { action = action, request = request }
 end
 local function resetPreviews()
   previewQueue, previewDone, previewResults = {}, {}, {}
-  noctalia.state.set("previews", {})
+  shared.set("previews", {})
 end
 pumpPreviews = function()
   if busy or not root then
@@ -39,7 +42,8 @@ pumpPreviews = function()
         local value = result
         previewResults[id] = (value.previews or {})[id]
           or { error = value.message or noctalia.tr("service.preview_unavailable") }
-        noctalia.state.set("previews", previewResults)
+        previewResults.__fingerprint = (shared.get("catalogue") or {}).fingerprint
+        shared.set("previews", previewResults)
       end
       pumpPreviews()
     end)
@@ -70,7 +74,7 @@ run = function(action, request)
     resetPreviews()
   end
   local startedEpoch = epoch
-  local previousStatus = noctalia.state.get("status") or {}
+  local previousStatus = shared.get("status") or {}
   busy = true
   if loadingCatalogue then
     publishCatalogue(true, nil)
@@ -89,7 +93,7 @@ run = function(action, request)
       if (value.catalogue.offset or 0) == 0 then
         resetPreviews()
       else
-        local previous = noctalia.state.get("catalogue") or {}
+        local previous = shared.get("catalogue") or {}
         if previous.fingerprint ~= value.catalogue.fingerprint then
           refreshQueued = true
         else
@@ -104,7 +108,7 @@ run = function(action, request)
         end
       end
       if not refreshQueued then
-        noctalia.state.set("catalogue", value.catalogue)
+        shared.set("catalogue", value.catalogue)
       end
     end
     if loadingCatalogue and startedEpoch == epoch then
@@ -114,7 +118,7 @@ run = function(action, request)
       publishCatalogue(continuing, value.ok == false and value.message or nil)
     end
     if value.diagnostics then
-      noctalia.state.set("diagnostics", value.diagnostics)
+      shared.set("diagnostics", value.diagnostics)
       publish(previousStatus)
     else
       publish(value)
@@ -191,7 +195,7 @@ function onConfigChanged()
   epoch += 1
   resetPreviews()
   publishCatalogue(true, nil)
-  noctalia.state.set("catalogue", {})
+  shared.set("catalogue", {})
   if busy then
     refreshQueued = true
   else
@@ -203,7 +207,7 @@ function onIpc(event, payload)
     run("refresh")
   elseif event == "status" then
     run("status")
-  elseif event == "request" then
+  elseif event == "request" and type(payload) == "string" and #payload <= 4096 then
     local request = noctalia.json.decode(payload or "")
     if type(request) == "table" then
       noctalia.state.set("request", request)

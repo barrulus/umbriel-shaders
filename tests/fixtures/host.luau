@@ -38,11 +38,11 @@ local function decode(s)
     space(); local c=s:sub(i,i)
     if c=='"' then return str() end
     if c=='{' or c=='[' then
-      i+=1; space(); local out={}; local close=c=='{' and '}' or ']'
+      i+=1; space(); local out={}; local index=1; local close=c=='{' and '}' or ']'
       if s:sub(i,i)==close then i+=1; return out end
       repeat
         local key
-        if c=='{' then space(); key=str(); space(); assert(s:sub(i,i)==':'); i+=1 else key=#out+1 end
+        if c=='{' then space(); key=str(); space(); assert(s:sub(i,i)==':'); i+=1 else key=index; index+=1 end
         out[key]=parse(); space()
         local separator=s:sub(i,i); i+=1
         if separator==close then break end

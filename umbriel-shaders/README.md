@@ -77,6 +77,7 @@ Add the bar widget or control-center shortcut, then open **Effect slots**.
   curve; they are saved only when you apply a timing change. Per-application
   opening, closing and movement animations/timing require additional Umbriel support.
 - **All shaders** opens the complete catalogue, including coordinated families.
+  Use **Next page** and **Previous page** to move through the results.
 - Search or filter shaders by type and tag. Choose a shader and destination, then
   **Apply**. Open **Details** to review the proposed changes before applying.
 - Choose a family to apply coordinated shaders together. **Keep current** leaves

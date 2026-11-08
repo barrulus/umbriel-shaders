@@ -50,6 +50,60 @@ error with the 325,630-byte cached online index. With yielding JSON serializatio
 the same startup loaded 136 published effects and 10 families in approximately
 three seconds. The probe read a separate cache copy and did not apply shaders.
 
+### CPU-budget safeguards (0.5.5)
+
+The first-install report identified the native `noctalia.json.decode` call in
+`util.luau`: the earlier serialization fix had left decoding indivisible. The
+follow-up audit also found synchronous shared-state transfers, aggregate work
+from concurrent jobs, uninterrupted validation/traversal, and growing UI trees.
+The 0.5.5 changes address those paths together:
+
+- JSON decoding passes at most 4 KiB at a time to the native decoder, including
+  long strings. String encoding and transport preserve UTF-8 boundaries;
+  decoding keeps escapes and surrogate pairs together. Numeric literals over
+  4 KiB are rejected before native conversion. Existing document-size and nesting
+  limits remain in force. IPC requests are limited to 4 KiB.
+- Large shared-state values use bounded string chunks and a small revision
+  manifest. Two storage slots keep the number of keys bounded. Readers verify
+  the committed revision before and after decoding; superseded work is discarded.
+  The panel can reopen an existing snapshot without a whole-document native
+  read, and status no longer duplicates the catalogue.
+- Queued jobs, nested jobs and completion handlers share a 3 ms cooperative
+  slice. Remaining jobs wait for another update. Synchronous await completions,
+  validation, recursive copy/equality, large sorts and SHA-256 all checkpoint.
+  SHA-256 checks every 256 input bytes instead of every 4 KiB.
+- Panel construction is coalesced, can yield, and discards stale work after a
+  newer event or close. Panel work uses Noctalia frame ticks, stopping when idle
+  or closed; service work uses update timers. Native tree submission is separated
+  from construction.
+  Shader/family galleries use 24-item pages; application rules use 12-item pages.
+  Saved selections, report lines, comparisons and long selector lists are also
+  paginated. Family choices retain every option while previewing the selected
+  member rather than constructing every member's card at once.
+
+The deterministic regression suites exercise combined callback costs rather than
+only individual jobs. They cover five simultaneous jobs, yielding completion
+handlers, nested launches, synchronous awaits, 64 families of 64 members, large
+strings, UTF-8 chunk boundaries, delayed notifications, overwritten storage slots,
+reopening a snapshot, source-revision preview races, and interrupted panel
+construction. The host fixture also
+preserves null array positions, matching Noctalia's conversion.
+
+`tests/ui_budget.py` runs the actual service, panel, scheduler and transport with
+512 effects, 64 families, 256 application assignments, 1,024 windows and a
+5,000-line diagnostic report. Native boundaries are charged deterministic costs;
+its largest submitted tree had 492 nodes and its maximum modeled callback was
+9.84 ms, below the 25 ms host limit. These are modeled costs, not live timings.
+
+All backend, UI workflow and combined UI-budget suites pass. Additional headless
+checks used Noctalia's native Lua/JSON conversion helpers, including long escaped
+surrogate pairs and invalid escapes. The published catalogue fetched on
+2026-11-08 (423,773 bytes, 169 effects and 11 families) also passed fresh-download,
+browse and cached-reopen checks. The current local checkout passed 179 effects,
+11 families and 185 activation bindings, including a border overlay. Plugin lint and first-party formatting pass.
+No running Noctalia session was available for live verification of these changes;
+verification in Casper's session remains outstanding.
+
 ## Local catalogue performance
 
 The local-performance fixture rejects any attempt to read preview media while

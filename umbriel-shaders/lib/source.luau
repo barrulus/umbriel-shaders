@@ -200,7 +200,7 @@ function Source:collectCache()
     end
     A.checkpoint()
   end
-  table.sort(stale, function(a, b)
+  U.sort(stale, function(a, b)
     return a.mtime < b.mtime
   end)
   for _, record in ipairs(stale) do

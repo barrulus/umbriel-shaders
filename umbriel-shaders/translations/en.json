@@ -56,6 +56,9 @@
   },
   "panel": {
     "browse_tag": "Browse #{tag}",
+    "previous_page": "Previous page",
+    "next_page": "Next page",
+    "page_count": "Page {page} of {pages}",
     "show_more": "Show more ({visible} of {total})",
     "applied_kind": "{kind} · Applied",
     "related_shaders": {

@@ -11,6 +11,7 @@ With a Luau CLI installed:
 ```sh
 python3 tests/run.py /path/to/luau
 python3 tests/ui_workflows.py /path/to/luau
+python3 tests/ui_budget.py /path/to/luau
 noctalia plugins lint umbriel-shaders
 stylua --check umbriel-shaders/*.luau umbriel-shaders/lib/*.luau
 ```

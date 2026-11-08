@@ -46,7 +46,7 @@ local function resetHost()
   ui = setmetatable({}, { __index = function(_table, kind)
     return function(props, children) return { kind = kind, props = props or {}, children = children or {} } end
   end })
-  panel = { render = function(value) tree = value end, close = function() end }
+  panel = { setNeedsFrameTick = function() end, render = function(value) tree = value end, close = function() end }
 end
 local function nodes(predicate)
   local result = {}
@@ -90,10 +90,10 @@ check(values.request.action == "status", "Opening the panel triggered a catalogu
 check(#values.preview_request.ids == 24, "Visible preview request was not bounded to 24")
 check(#nodes(function(item) return item.props.key and string.match(item.props.key, "^cursor/") ~= nil end) == 20,
   "Initial gallery did not paginate at 24 effects")
-translationOverrides["panel.show_more"] = "Voir {visible} / {total}"
+translationOverrides["panel.next_page"] = "Suivante"
 translationOverrides["panel.shader_count.other"] = "{count} effets"
 onOpen()
-check(node("show-more").props.text == "Voir 24 / 30", "Pagination did not use translated substitutions")
+check(node("show-more").props.text == "Suivante", "Pagination did not use translated substitutions")
 check(#nodes(function(item) return item.props.text == "30 effets" end) == 1, "Gallery did not use translated plurals")
 translationOverrides = {}
 showMore()
@@ -277,6 +277,7 @@ complete(1, { protocol_version = 1, ok = true, catalogue = { offset = 0, next_of
 check(#pending == 1 and pending[1].args.action == "catalogue", "Catalogue pagination was not continued")
 complete(1, { protocol_version = 1, ok = true, catalogue = { offset = 1, fingerprint = "same", effects = { { id = "b" } }, families = {} } })
 check(#values.catalogue.effects == 2 and not values.status.busy, "Catalogue pages were not combined")
+check(values.status.catalogue == nil, "Status duplicated the entire catalogue")
 noctalia.state.set("preview_request", { ids = { "p1", "p2", "p3", "p4", "p5", "p6" } })
 check(#pending == 4, "Preview requests did not respect the four-download concurrency limit")
 noctalia.state.set("request", { action = "status" })
@@ -323,9 +324,16 @@ check(onExit == nil, "Stopping the plugin must not launch restoration")
 print("PASS service cached startup, catalogue pages, progressive previews, source-change races, persistent selections")
 print(tostring(checks) .. " UI workflow assertions passed")
 '''
-source = translation_fixture() + host + '\nlocal catalogueModule = (function()\n' + (plugin / 'lib/catalogue.luau').read_text() + '\nend)()\n'
+source = translation_fixture() + host + '''
+local asyncModule = { setWakeup = function() end, checkpoint = function() end, pause = function() end, update = function() end,
+ defer = function(fn, done) local ok, result = pcall(fn); done(ok, result) end }
+function require(path) if path == "./async.luau" then return asyncModule end; if path == "./util.luau" then return {sort = table.sort} end; error(path) end
+''' + '\nlocal catalogueModule = (function()\n' + (plugin / 'lib/catalogue.luau').read_text() + '\nend)()\n'
 source += 'local allocationModule = (function()\n' + (plugin / 'lib/allocation.luau').read_text() + '\nend)()\n'
 source += '''function require(path)
+ if path == "./lib/async.luau" or path == "./async.luau" then return asyncModule end
+ if path == "./lib/util.luau" then return {sort = table.sort} end
+ if path == "./lib/shared.luau" then return { new = function() return noctalia.state end } end
  if path == "./lib/catalogue.luau" then return catalogueModule end
  if path == "./lib/allocation.luau" then return allocationModule end
  return { new = function() return { update = function() end, run = noctalia.runAsync } end }

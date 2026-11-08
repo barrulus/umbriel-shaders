@@ -20,3 +20,5 @@ find_package(Python3 REQUIRED COMPONENTS Interpreter)
 enable_testing()
 add_test(NAME backend COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/run.py" $<TARGET_FILE:luau-test-runner>)
 add_test(NAME ui COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/ui_workflows.py" $<TARGET_FILE:luau-test-runner>)
+
+add_test(NAME ui-budget COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/ui_budget.py" $<TARGET_FILE:luau-test-runner>)
