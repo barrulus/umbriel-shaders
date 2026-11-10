@@ -41,6 +41,17 @@ end
 for _ = 1, 1000 do if finished == 5 then break end; tick() end
 check(finished == 5 and completions == 5, 'Queued jobs or yielding completions were lost')
 check(maximum < .025, 'Five jobs exceeded a shared update budget')
+local batchDone = false
+start = clock
+A.run(function()
+  local results = A.map({1, 2, 3, 4, 5, 6, 7, 8}, function(value)
+    for _ = 1, 10 do charge(.001); A.checkpoint() end
+    return value * 2
+  end)
+  check(results[1] == 2 and results[8] == 16, 'Batched work lost results while yielding')
+end, function(ok, err) assert(ok, err); batchDone = true end)
+while not batchDone do tick() end
+check(maximum < .025, 'Batch workers exceeded the shared callback budget')
 local done = false
 start = clock
 A.run(function()

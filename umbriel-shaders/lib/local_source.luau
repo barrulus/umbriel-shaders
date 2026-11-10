@@ -5,7 +5,7 @@ local R = require("./registry.luau")
 local G = require("./graph.luau")
 local A = require("./async.luau")
 local M = {}
-function M.build(root, cache, refresh)
+function M.build(root, cache, refresh, snapshot)
   root = U.normalize(root)
   local stamps, metadata, fallback = {}, {}, {}
   local count = 0
@@ -74,11 +74,17 @@ function M.build(root, cache, refresh)
     end
     return true
   end
+  if not refresh and snapshot and unchanged(snapshot) then
+    return snapshot.registry, snapshot.fingerprint, snapshot
+  end
   if not refresh and U.exists(stampPath) and U.exists(directory .. "/catalogue.json") then
     local ok, previous = pcall(U.load, stampPath)
     if ok and unchanged(previous) then
-      return R.validate(U.decode(U.read(directory .. "/catalogue.json", 4 * U.limit)), true),
-        previous.fingerprint
+      local registry =
+        R.validate(U.decode(U.read(directory .. "/catalogue.json", 4 * U.limit)), true)
+      return registry,
+        previous.fingerprint,
+        { files = stamps, registry = registry, fingerprint = previous.fingerprint }
     end
   end
   local prefix = ""
@@ -398,6 +404,6 @@ function M.build(root, cache, refresh)
   U.atomic(directory .. "/catalogue.json", raw)
   local fingerprint = U.token()
   U.save(stampPath, { files = stamps, fingerprint = fingerprint })
-  return registry, fingerprint
+  return registry, fingerprint, { files = stamps, registry = registry, fingerprint = fingerprint }
 end
 return M

@@ -26,7 +26,7 @@ local function download(url, limit)
   )
   return response.body
 end
-function M.open(root, refresh)
+function M.open(root, refresh, previous)
   local mode = noctalia.getConfig("source_mode") or "online"
   local cache = U.path(root, "catalogue-cache/" .. mode)
   local self = setmetatable({ mode = mode, cache = cache, offline = false }, Source)
@@ -45,7 +45,12 @@ function M.open(root, refresh)
     self.registry = self.registry or R.validate(U.decode(U.read(path, 4 * U.limit)), false)
   elseif mode == "local" then
     self.assets = U.normalize(noctalia.expandPath(noctalia.getConfig("source_root") or ""))
-    self.registry, self.fingerprint = Local.build(self.assets, cache, refresh)
+    self.registry, self.fingerprint, self.snapshot = Local.build(
+      self.assets,
+      cache,
+      refresh,
+      previous and previous.assets == self.assets and previous.snapshot
+    )
   else
     assert(mode == "snapshot", noctalia.tr("source.invalid_catalogue_source_mode"))
     local index = noctalia.expandPath(noctalia.getConfig("catalogue_index") or "")
@@ -221,6 +226,7 @@ function Source:resolve(bindings, base, library, compare, installedLibraries, in
     effects[e.id] = e
     names[e.preset] = e.id
   end
+  local installedPaths = {}
   for _, storedLibrary in ipairs(installedLibraries) do
     for _, kind in ipairs({ "cursor", "border", "window", "screen", "animation" }) do
       local dir = U.path(storedLibrary, kind)
@@ -230,20 +236,51 @@ function Source:resolve(bindings, base, library, compare, installedLibraries, in
         for _, entry in ipairs(entries) do
           local id = kind .. "/" .. entry
           local path = U.path(storedLibrary, id .. "/preset.json")
-          if not installed[id] and U.exists(path) then
-            local record = U.load(path)
-            assert(record.id == id, noctalia.tr("source.installed_effect_identity_mismatch"))
-            names[record.name] = id
+          if
+            not installed[id]
+            and not (self.mode == "local" and effects[id])
+            and U.exists(path)
+          then
             installed[id] = {
-              record = record,
               library = storedLibrary,
               directory = U.path(storedLibrary, id),
               path = path,
             }
+            table.insert(installedPaths, id)
           end
         end
       end
     end
+  end
+  A.map(installedPaths, function(id)
+    local record = U.load(installed[id].path)
+    assert(record.id == id, noctalia.tr("source.installed_effect_identity_mismatch"))
+    installed[id].record = record
+  end)
+  -- Keep lookup precedence deterministic even if reads complete out of order.
+  for _, id in ipairs(installedPaths) do
+    names[installed[id].record.name] = id
+  end
+  -- Fetch the requested assets together. This cache lives for this preparation
+  -- only: subsequent applies still verify current source/installed bytes.
+  local wanted, bytes, size = {}, {}, 0
+  for _, binding in pairs(bindings) do
+    local effect = effects[binding.id]
+    if effect and not base.presets[binding.name] and not installed[binding.id] then
+      for _, path in ipairs(effect.install_files) do
+        local record = self.registry.files[path]
+        if not wanted[path] and size + record.bytes <= U.limit then
+          wanted[path] = true
+          size += record.bytes
+        end
+      end
+    end
+  end
+  A.map(U.keys(wanted), function(path)
+    bytes[path] = self:bytes(path)
+  end)
+  local function sourceBytes(path)
+    return bytes[path] or self:bytes(path)
   end
   local function localCopy(id, name, definition, shader, config)
     local copy = { preset = name, config = config }
@@ -337,7 +374,7 @@ function Source:resolve(bindings, base, library, compare, installedLibraries, in
           noctalia.tr("source.catalogue_identity_changed")
         )
         local presetPath = id .. "/effect.toml"
-        local data = U.toml(self:bytes(presetPath))
+        local data = U.toml(sourceBytes(presetPath))
         assert(
           data.effects
             and #U.keys(data.effects) == 1
@@ -374,11 +411,11 @@ function Source:resolve(bindings, base, library, compare, installedLibraries, in
           U.equal(dependencies, expectedDeps),
           noctalia.tr("source.preset_dependencies_differ_from_catalogue")
         )
-        shader = self:bytes(shaderPath)
+        shader = sourceBytes(shaderPath)
         local expected = { [presetPath] = true, [shaderPath] = true }
         notices = effect.notice_files
         for _, notice in ipairs(notices) do
-          noticeBytes[notice] = self:bytes(notice)
+          noticeBytes[notice] = sourceBytes(notice)
           expected[notice] = true
         end
         local install = {}
@@ -413,15 +450,16 @@ function Source:resolve(bindings, base, library, compare, installedLibraries, in
       end
       definition = U.copy(definition)
       definition.shader = "shader.glsl"
-      U.save(recordPath, { id = id, name = name, definition = definition, notices = notices })
+      local recordBytes =
+        U.save(recordPath, { id = id, name = name, definition = definition, notices = notices })
       definition = U.copy(definition)
       definition.shader = directory .. "/shader.glsl"
       result.definitions[name] = definition
-      result.files[recordPath] = U.fingerprint(recordPath)
-      result.files[definition.shader] = U.fingerprint(definition.shader)
+      result.files[recordPath] = U.fingerprint(recordPath, recordBytes)
+      result.files[definition.shader] = U.fingerprint(definition.shader, shader)
       for _, notice in ipairs(notices) do
         local path = U.path(library .. "/notices", notice)
-        result.files[path] = U.fingerprint(path)
+        result.files[path] = U.fingerprint(path, noticeBytes[notice])
       end
     end
     visiting[name] = nil

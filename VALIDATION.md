@@ -118,6 +118,34 @@ after 40 seconds and had read 18.7 MB of preview media. The revised loader index
 resolved family previews in under 1 ms. It read no preview media. These timings are
 for the backend on this machine; they exclude the shell's image decoding/rendering.
 
+## Activation latency regression
+
+Selection used to reopen and decode the catalogue, read assets and fingerprints
+serially, read back newly written files, validate twice for direct Apply, and copy
+both revisions into the installed cache even when their paths overlapped.
+
+Activation now reuses the parsed catalogue (while checking local file stamps),
+batches independent I/O with at most four workers per batch, fingerprints generated
+bytes directly, and validates direct selections once before the compositor switch.
+Asset prefetch is limited to 1 MiB per preparation. Explicit Review still validates
+its configuration, and Apply still checks for changes after Review. Failed batches
+drain launched workers before returning so rollback cannot race unfinished work.
+
+`tests/luau/activation_performance.luau` uses 69 effects and a five-shader family.
+With a fixed 16 ms fixture callback step and CPU time excluded, host I/O latency is:
+
+| Operation | Before | After |
+| --- | ---: | ---: |
+| First individual selection | 704 ms | 336 ms |
+| Five-shader family | 2,000 ms | 608 ms |
+| Individual change with other family slots retained | 2,656 ms | 736 ms |
+
+These are deterministic fixture timings, not live desktop measurements. Initial
+downloads and GPU compilation are not included. The fixture also covers queue
+saturation, worker failure, changed generation files and completion cleanup;
+`callback_budget.luau` checks that batch workers share the existing CPU slice.
+Backend, panel/service, UI-budget, real-checkout and lint checks pass.
+
 ## Local Refresh regression
 
 The local-refresh fixture checks active shader and preset updates, retained family

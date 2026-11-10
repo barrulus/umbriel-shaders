@@ -123,10 +123,10 @@ function M.new(root)
       noctalia.getConfig("catalogue_index"),
       noctalia.getConfig("assets_root"),
     })
-    if cached and cacheKey == key and not refresh and not recheck then
+    if cached and cacheKey == key and not refresh and (not recheck or cached.mode == "online") then
       return cached
     end
-    cached = Source.open(root, refresh)
+    cached = Source.open(root, refresh, cacheKey == key and cached or nil)
     cacheKey = key
     return cached
   end
@@ -243,26 +243,18 @@ function M.new(root)
                   or assert(request.effect, noctalia.tr("backend.choose_an_effect")),
               }
             end
-            value = controller:prepare(
-              catalogue,
-              requested,
-              family,
-              request.compare,
-              nil,
-              action == "timing"
-                  and {
-                    timing = request.slot,
-                    duration_ms = request.duration_ms,
-                    curve = request.curve,
-                  }
-                or nil
-            )
-            if
-              action == "choose"
+            local immediate = action == "choose"
               or action == "choose-family"
               or action == "remove"
               or action == "timing"
-            then
+            local options = { immediate = immediate }
+            if action == "timing" then
+              options.timing = request.slot
+              options.duration_ms = request.duration_ms
+              options.curve = request.curve
+            end
+            value = controller:prepare(catalogue, requested, family, request.compare, nil, options)
+            if immediate then
               value = controller:apply(value.plan_token)
             end
           elseif action == "apply" then

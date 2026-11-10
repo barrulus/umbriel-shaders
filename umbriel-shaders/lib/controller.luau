@@ -159,10 +159,7 @@ function Controller:stateHash()
   return U.exists(self.root .. "/state.json") and U.hash(U.read(self.root .. "/state.json"))
     or false
 end
-function Controller:cacheInstalled(generation, state)
-  if not generation or not generation.library then
-    return
-  end
+function Controller:cacheInstalled(before, state)
   local library = self.root .. "/library"
   -- Older versions ran directly from this cache. Do not alter it while it is
   -- still needed by the active configuration or its Undo revision.
@@ -178,12 +175,22 @@ function Controller:cacheInstalled(generation, state)
   end
   -- Keep installed customizations available after removal/Restore, as before.
   -- Live configurations always use their independent generation copies.
-  for _, path in ipairs(U.keys(generation.files)) do
-    if path:sub(1, #generation.library + 1) == generation.library .. "/" then
-      U.atomic(library .. path:sub(#generation.library + 1), U.read(path))
-      A.checkpoint()
+  local sources = {}
+  for _, generation in pairs({ before = before, after = state.current }) do
+    if generation.library then
+      for path in pairs(generation.files) do
+        if path:sub(1, #generation.library + 1) == generation.library .. "/" then
+          local destination = library .. path:sub(#generation.library + 1)
+          if not sources[destination] or generation == state.current then
+            sources[destination] = path
+          end
+        end
+      end
     end
   end
+  A.map(U.keys(sources), function(destination)
+    U.atomic(destination, U.read(sources[destination]))
+  end)
 end
 function Controller:cleanup(state)
   if U.exists(self.root .. "/pending.json") then
@@ -409,7 +416,7 @@ function Controller:prepare(catalogue, requested, family, compare, refreshing, o
   local beforeFiles
   if managed then
     beforeFiles = U.copy(before.current.files)
-    for path, expected in pairs(beforeFiles) do
+    A.map(U.keys(beforeFiles), function(path)
       local asset = false
       for _, root in ipairs(installedLibraries) do
         asset = asset or path:sub(1, #root + 1) == root .. "/"
@@ -417,9 +424,9 @@ function Controller:prepare(catalogue, requested, family, compare, refreshing, o
       if asset then
         beforeFiles[path] = U.fingerprint(path)
       else
-        U.verify({ [path] = expected })
+        U.verify({ [path] = beforeFiles[path] })
       end
-    end
+    end)
   end
   local generation = {
     token = id,
@@ -430,7 +437,8 @@ function Controller:prepare(catalogue, requested, family, compare, refreshing, o
     presets = selected.presets,
     library = library,
   }
-  U.atomic(shader, "vec4 cursor(vec2 uv) { return umbriel_sample(uv); }\n")
+  local markerBytes = "vec4 cursor(vec2 uv) { return umbriel_sample(uv); }\n"
+  U.atomic(shader, markerBytes)
   local lines = { "# Managed by Umbriel Shaders. Edit the original configuration." }
   for _, line in ipairs(U.settingLines(settings)) do
     table.insert(lines, line)
@@ -444,8 +452,9 @@ function Controller:prepare(catalogue, requested, family, compare, refreshing, o
       table.insert(ruleLines, use:sub(9) .. "_effect = " .. U.json(bindings[key].name))
     end
   end
-  U.atomic(rules, table.concat(ruleLines, "\n") .. "\n")
-  generation.files[rules] = U.fingerprint(rules)
+  local ruleBytes = table.concat(ruleLines, "\n") .. "\n"
+  U.atomic(rules, ruleBytes)
+  generation.files[rules] = U.fingerprint(rules, ruleBytes)
   table.insert(lines, "[include]\nfiles = [" .. U.json(rules) .. ", " .. U.json(self.base) .. "]")
   for _, name in ipairs(U.keys(selected.definitions)) do
     table.insert(lines, "[effects.preset." .. U.json(name) .. "]")
@@ -462,12 +471,17 @@ function Controller:prepare(catalogue, requested, family, compare, refreshing, o
   if graph.drm then
     table.insert(lines, "[drm]")
   end
-  U.atomic(config, table.concat(lines, "\n") .. "\n")
-  self.peer:validate(config)
-  U.verify(graph.files)
-  U.verify(selected.files)
-  generation.files[config] = U.fingerprint(config)
-  generation.files[shader] = U.fingerprint(shader)
+  local configBytes = table.concat(lines, "\n") .. "\n"
+  U.atomic(config, configBytes)
+  -- Direct selection validates once in transact(), immediately before the
+  -- switch. A standalone review must validate before it can report readiness.
+  if not options.immediate then
+    self.peer:validate(config)
+    U.verify(graph.files)
+    U.verify(selected.files)
+  end
+  generation.files[config] = U.fingerprint(config, configBytes)
+  generation.files[shader] = U.fingerprint(shader, markerBytes)
   U.save(directory .. "/managed-files.json", U.keys(generation.files))
   U.save(self.root .. "/plan.json", {
     schema_version = 1,
@@ -483,6 +497,9 @@ function Controller:prepare(catalogue, requested, family, compare, refreshing, o
     used_local_copy = #selected.local_copies > 0,
     before_files = beforeFiles,
   })
+  if options.immediate then
+    return { plan_token = id }
+  end
   local previous = U.copy(graph.settings)
   if before.current then
     for k, v in pairs(before.current.settings) do
@@ -653,7 +670,6 @@ function Controller:transact(before, after, desired, baseFiles, expected)
   U.remove(self.root .. "/pending.json")
   pcall(function()
     self:cacheInstalled(before.current, after)
-    self:cacheInstalled(after.current, after)
   end)
   pcall(function()
     U.remove(self.root .. "/plan.json")

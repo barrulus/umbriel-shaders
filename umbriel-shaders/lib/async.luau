@@ -82,6 +82,39 @@ function M.checkpoint()
     M.pause()
   end
 end
+-- Independent I/O should share a round trip, rather than serializing one host
+-- callback per file. Drain every worker before returning, including on failure.
+function M.map(items, fn)
+  if #items == 0 then
+    return {}
+  end
+  local results, nextIndex, remaining = {}, 1, math.min(4, #items)
+  local failed, failure = false, nil
+  M.await(function(done)
+    for _ = 1, remaining do
+      M.run(function()
+        while not failed and nextIndex <= #items do
+          local index = nextIndex
+          nextIndex += 1
+          results[index] = fn(items[index], index)
+        end
+      end, function(ok, err)
+        if not ok and not failed then
+          failed, failure = true, err
+        end
+        remaining -= 1
+        if remaining == 0 then
+          done()
+        end
+      end)
+    end
+    return true
+  end)
+  if failed then
+    error(failure, 0)
+  end
+  return results
+end
 function M.update()
   local ready = queue
   queue = {}

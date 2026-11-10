@@ -45,9 +45,10 @@ local fingerprint = page.fingerprint
 reads = 0
 jitter = 0.0000002
 local warm = F.run(function()
-  return Source.open("/local-cache", false)
+  return Source.open("/local-cache", false, cold)
 end)
 F.check(reads == 0, "Timestamp jitter caused a metadata rebuild")
+F.check(warm.registry == cold.registry, "Unchanged in-memory catalogue was parsed again")
 F.check(F.run(function()
   return warm:browse().fingerprint
 end) == fingerprint, "Unchanged catalogue changed pagination identity")
@@ -80,7 +81,7 @@ F.check(not pcall(function()
 end), "Changed local shader bypassed verification")
 reads = 0
 local refreshed = F.run(function()
-  return Source.open("/local-cache", true)
+  return Source.open("/local-cache", true, warm)
 end)
 F.check(reads > 0 and refreshed.fingerprint ~= fingerprint, "Refresh did not force reindexing")
 F.check(F.run(function()
@@ -93,7 +94,7 @@ F.write(
 )
 reads = 0
 local edited = F.run(function()
-  return Source.open("/local-cache", false)
+  return Source.open("/local-cache", false, refreshed)
 end)
 F.check(
   reads > 0 and edited.fingerprint ~= refreshed.fingerprint,
@@ -101,7 +102,7 @@ F.check(
 )
 F.files["/assets/cursor/second/metadata.toml"] = nil
 local removed = F.run(function()
-  return Source.open("/local-cache", false)
+  return Source.open("/local-cache", false, edited)
 end)
 F.check(#removed.registry.effects == 1, "Removed effect was retained in cache")
 

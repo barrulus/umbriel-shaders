@@ -225,6 +225,7 @@ function M.save(path, value)
   local raw = M.json(value)
   assert(#raw <= M.limit, noctalia.tr("util.persistent_document_exceeds_limit"))
   M.atomic(path, raw)
+  return raw
 end
 function M.load(path)
   return M.decode(M.read(path))
@@ -234,17 +235,17 @@ function M.remove(path)
     assert(noctalia.removeFile(path), noctalia.tr("util.cannot_remove", { value = path }))
   end
 end
-function M.fingerprint(path)
-  return sha(path .. "\n" .. M.read(path))
+function M.fingerprint(path, raw)
+  return sha(path .. "\n" .. (raw or M.read(path)))
 end
 function M.verify(files)
-  for _, path in ipairs(M.keys(files)) do
+  A.map(M.keys(files), function(path)
     if files[path] == "missing" then
       assert(not M.exists(path), noctalia.tr("util.optional_file_appeared", { value = path }))
     else
       assert(M.fingerprint(path) == files[path], noctalia.tr("util.file_changed", { value = path }))
     end
-  end
+  end)
 end
 function M.toml(raw)
   assert(#raw <= M.limit, noctalia.tr("util.toml_exceeds_size_limit"))
