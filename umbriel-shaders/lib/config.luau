@@ -238,38 +238,47 @@ function M.validate(configPath, cb)
   end
 end
 
-local function atomicWrite(path, text)
+-- Plugin-owned files are replaced atomically (tmp + rename). The user's own
+-- config is written in place so a symlinked config.toml is not replaced.
+local function writeText(path, text, atomic)
+  if not atomic then
+    local ok, err = noctalia.writeFile(path, text)
+    return ok, tostring(err or "write failed")
+  end
   local temp = path .. ".tmp"
   local ok, err = noctalia.writeFile(temp, text)
   if ok then
     ok, err = noctalia.renameFile(temp, path)
+    if not ok then
+      noctalia.removeFile(temp)
+    end
   end
-  return ok, err
+  return ok, tostring(err or "write failed")
 end
 
 -- Write `newText` to `target` and keep it only if Umbriel, validating
 -- `configPath`, reports nothing new; otherwise put the old text back.
-function M.guardedWrite(configPath, target, newText, cb)
+function M.guardedWrite(configPath, target, newText, atomic, cb)
   M.validate(configPath, function(before, err)
     if not before then
-      cb(false, err)
+      cb(false, tostring(err))
       return
     end
     local previous = noctalia.readFile(target)
-    local ok, writeErr = atomicWrite(target, newText)
+    local ok, writeErr = writeText(target, newText, atomic)
     if not ok then
       cb(false, writeErr)
       return
     end
     M.validate(configPath, function(after, err2)
-      local problems = after and M.introduced(before, after) or { err2 }
+      local problems = after and M.introduced(before, after) or { tostring(err2) }
       if #problems == 0 then
         cb(true)
         return
       end
       local restored, restoreErr
       if previous then
-        restored, restoreErr = atomicWrite(target, previous)
+        restored, restoreErr = writeText(target, previous, atomic)
       else
         restored, restoreErr = noctalia.removeFile(target)
       end
@@ -296,8 +305,12 @@ function M.setup(paths, cb)
     cb(false, err)
     return
   end
-  M.guardedWrite(paths.config, paths.config, updated, function(done, message)
-    if not done and message:find("restoring " .. paths.config .. " failed", 1, true) then
+  M.guardedWrite(paths.config, paths.config, updated, false, function(done, message)
+    if
+      not done
+      and type(message) == "string"
+      and message:find("restoring " .. paths.config .. " failed", 1, true)
+    then
       message = message .. "; the original is in " .. paths.config .. ".bak"
     end
     cb(done, message)

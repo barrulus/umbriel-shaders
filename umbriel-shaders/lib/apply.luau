@@ -28,7 +28,7 @@ function M.commit(env, nxt, cb)
       cb(false, noctalia.tr("error.download", { file = failed }))
       return
     end
-    Config.guardedWrite(paths.config, paths.generated, Config.render(nxt), function(ok, err)
+    Config.guardedWrite(paths.config, paths.generated, Config.render(nxt), true, function(ok, err)
       if ok then
         cb(Selection.save(env.selectionPath, nxt))
       else
