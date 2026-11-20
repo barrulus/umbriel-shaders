@@ -25,6 +25,7 @@ local query, slotFilter, page = "", nil, 1
 local picking = nil -- { slot = string, app_id = string? } while choosing a shader
 local previews = {} -- destination path -> "pending" | "ok" | "failed"
 local timingDraft = {} -- slot -> { duration = string, curve = string }, cleared after each commit
+local timingError = {} -- slot -> message for a timing draft that did not parse
 local draftGeneration = 0 -- bumped after each commit so timing inputs reseed from the saved values
 
 local render
@@ -41,8 +42,32 @@ local function nodes(...)
   return out
 end
 
+local function append(out, list)
+  for _, node in ipairs(list) do
+    table.insert(out, node)
+  end
+end
+
+-- A small button; `opts` adds variant, enabled, glyph, tooltip, key and so on.
+local function button(text, onClick, opts)
+  local props = { text = text, onClick = onClick, controlSize = "sm" }
+  for key, value in pairs(opts or {}) do
+    props[key] = value
+  end
+  return ui.button(props)
+end
+
 local function slotLabel(slot)
   return tr("slot." .. Slots.key(slot))
+end
+
+-- Slot names for a ui.select, optionally after a leading `first` choice.
+local function slotOptions(first)
+  local options = { first }
+  for _, slot in ipairs(Slots.list) do
+    table.insert(options, slotLabel(slot))
+  end
+  return options
 end
 
 local function say(text, isError)
@@ -64,7 +89,7 @@ local function commitSelection(nxt, okText, onOk)
     busy = false
     if ok then
       sel = nxt
-      timingDraft = {}
+      timingDraft, timingError = {}, {}
       draftGeneration += 1
       say(okText or tr("status.applied"))
       if onOk then
@@ -115,6 +140,9 @@ local function fetchCatalogue()
   Catalogue.fetch(dataDir, function(fresh, err)
     fetching = false
     if fresh then
+      if catState == "error" then
+        message = nil
+      end
       cat, catState = fresh, "ok"
     elseif cat then
       catState = "offline"
@@ -213,7 +241,7 @@ local expanded = nil -- slot whose details are open
 local openApps = nil -- sorted app IDs of open windows, nil until read
 
 local function loadOpenApps()
-  noctalia.runAsync({ "umbriel", "windows", "--json" }, function(result)
+  local started = noctalia.runAsync({ "umbriel", "windows", "--json" }, function(result)
     local windows = noctalia.json.decode(result.stdout or "")
     local seen, apps = {}, {}
     for _, window in ipairs(type(windows) == "table" and windows or {}) do
@@ -227,6 +255,10 @@ local function loadOpenApps()
     openApps = apps
     render()
   end)
+  if not started then
+    openApps = {}
+    render()
+  end
 end
 
 local function toggleDetails(slot)
@@ -242,7 +274,7 @@ local function applyTiming(slot)
   local draft = timingDraft[slot] or {}
   local timing, err = Selection.parseTiming(draft.duration, draft.curve)
   if not timing then
-    say(tr(err), true)
+    timingError[slot] = tr(err)
     render()
     return
   end
@@ -263,7 +295,16 @@ local function timingNodes(slot, entry)
   end
   local ownDuration = entry.settings[slot .. ".duration_ms"]
   local ownCurve = entry.settings[slot .. ".curve"]
-  return {
+  local function edited(field)
+    return function(value)
+      draft[field] = value
+      if timingError[slot] then
+        timingError[slot] = nil
+        render()
+      end
+    end
+  end
+  return nodes(
     ui.row({ gap = 8, align = "center" }, {
       ui.input({
         key = slot .. ":duration:" .. draftGeneration,
@@ -272,9 +313,7 @@ local function timingNodes(slot, entry)
           or tr("timing.duration"),
         controlSize = "sm",
         width = 190,
-        onChange = function(value)
-          draft.duration = value
-        end,
+        onChange = edited("duration"),
       }),
       ui.input({
         key = slot .. ":curve:" .. draftGeneration,
@@ -283,21 +322,15 @@ local function timingNodes(slot, entry)
           or tr("timing.curve"),
         controlSize = "sm",
         flexGrow = 1,
-        onChange = function(value)
-          draft.curve = value
-        end,
+        onChange = edited("curve"),
       }),
-      ui.button({
-        text = tr("timing.apply"),
-        controlSize = "sm",
-        enabled = canApply(),
-        onClick = function()
-          applyTiming(slot)
-        end,
-      }),
+      button(tr("timing.apply"), function()
+        applyTiming(slot)
+      end, { enabled = canApply() }),
     }),
-    hint(tr("timing.hint")),
-  }
+    timingError[slot] and ui.label({ text = timingError[slot], color = "error", fontSize = 12 }),
+    hint(tr("timing.hint"))
+  )
 end
 
 local function appNodes(slot)
@@ -315,25 +348,14 @@ local function appNodes(slot)
             color = "primary",
             fontSize = 12,
           }),
-          ui.button({
-            text = tr("slots.change"),
-            controlSize = "sm",
-            enabled = canApply(),
-            onClick = function()
-              pick(slot, rule.app_id)
-            end,
-          }),
-          ui.button({
-            text = tr("apps.remove"),
-            controlSize = "sm",
-            variant = "ghost",
-            enabled = canApply(),
-            onClick = function()
-              commit(function(n)
-                Selection.removeApp(n, rule.app_id, slot)
-              end)
-            end,
-          }),
+          button(tr("slots.change"), function()
+            pick(slot, rule.app_id)
+          end, { enabled = canApply() }),
+          button(tr("apps.remove"), function()
+            commit(function(n)
+              Selection.removeApp(n, rule.app_id, slot)
+            end)
+          end, { variant = "ghost", enabled = canApply() }),
         })
       )
     end
@@ -341,17 +363,14 @@ local function appNodes(slot)
   if openApps == nil then
     table.insert(out, hint(tr("apps.loading")))
   else
-    local choices = {}
+    local choices, labels = {}, { tr("apps.add") }
     for _, app in ipairs(openApps) do
       if not assigned[app] then
         table.insert(choices, app)
+        table.insert(labels, app)
       end
     end
     if #choices > 0 then
-      local labels = { tr("apps.add") }
-      for _, app in ipairs(choices) do
-        table.insert(labels, app)
-      end
       table.insert(
         out,
         ui.select({
@@ -391,52 +410,32 @@ local function slotsTab()
               fontSize = 12,
             }),
           }),
-          ui.button({
-            text = tr("slots.change"),
-            controlSize = "sm",
-            enabled = canApply(),
-            onClick = function()
-              pick(slot, nil)
-            end,
-          }),
+          button(tr("slots.change"), function()
+            pick(slot, nil)
+          end, { enabled = canApply() }),
           entry
-            and ui.button({
-              text = tr("slots.clear"),
-              controlSize = "sm",
-              variant = "ghost",
-              enabled = canApply(),
-              onClick = function()
-                commit(function(n)
-                  n.slots[slot] = nil
-                  n.timing[slot] = nil
-                end)
-                if expanded == slot and not Slots.appSlots[slot] then
-                  expanded = nil
-                end
-              end,
-            }),
+            and button(tr("slots.clear"), function()
+              commit(function(n)
+                n.slots[slot] = nil
+                n.timing[slot] = nil
+              end)
+              if expanded == slot and not Slots.appSlots[slot] then
+                expanded = nil
+              end
+            end, { variant = "ghost", enabled = canApply() }),
           hasDetails
-            and ui.button({
-              text = expanded == slot and tr("slots.hide") or tr("slots.details"),
-              controlSize = "sm",
-              variant = "ghost",
-              onClick = function()
-                toggleDetails(slot)
-              end,
-            })
+            and button(expanded == slot and tr("slots.hide") or tr("slots.details"), function()
+              toggleDetails(slot)
+            end, { variant = "ghost" })
         )
       ),
     }
     if expanded == slot then
       if entry and Slots.isAnimation(slot) then
-        for _, node in ipairs(timingNodes(slot, entry)) do
-          table.insert(children, node)
-        end
+        append(children, timingNodes(slot, entry))
       end
       if Slots.appSlots[slot] then
-        for _, node in ipairs(appNodes(slot)) do
-          table.insert(children, node)
-        end
+        append(children, appNodes(slot))
       end
     end
     table.insert(out, card(slot, children))
@@ -457,31 +456,17 @@ local function effectCard(effect)
   for _, slot in ipairs(picking and { picking.slot } or effect.uses) do
     table.insert(
       buttons,
-      ui.button({
-        key = effect.id .. ":" .. slot,
-        text = picking and tr("browse.apply") or slotLabel(slot),
-        controlSize = "sm",
-        variant = "secondary",
-        enabled = canApply(),
-        onClick = function()
-          applyEffect(effect, slot)
-        end,
-      })
+      button(picking and tr("browse.apply") or slotLabel(slot), function()
+        applyEffect(effect, slot)
+      end, { key = effect.id .. ":" .. slot, variant = "secondary", enabled = canApply() })
     )
   end
   if effect.imported and not picking then
     table.insert(
       buttons,
-      ui.button({
-        key = effect.id .. ":remove",
-        text = tr("import.remove"),
-        controlSize = "sm",
-        variant = "ghost",
-        enabled = canApply(),
-        onClick = function()
-          removeImport(effect)
-        end,
-      })
+      button(tr("import.remove"), function()
+        removeImport(effect)
+      end, { key = effect.id .. ":remove", variant = "ghost", enabled = canApply() })
     )
   end
   local image = previewFor(effect)
@@ -538,83 +523,47 @@ local function importShader()
   render()
 end
 
--- The GLSL import form at the end of Browse.
-local function browseFooter()
-  if picking then
-    return {}
-  end
-  if not importOpen then
-    return {
-      ui.row({ justify = "end" }, {
-        ui.button({
-          text = tr("import.open"),
-          glyph = "plus",
-          variant = "outline",
-          controlSize = "sm",
-          onClick = function()
-            importOpen = true
-            render()
-          end,
-        }),
-      }),
-    }
-  end
-  local labels = {}
-  for _, slot in ipairs(Slots.list) do
-    table.insert(labels, slotLabel(slot))
-  end
-  return {
-    card("import", {
-      ui.label({ text = tr("import.title"), fontWeight = "bold" }),
-      ui.input({
-        key = "import:path",
-        value = importForm.path,
-        placeholder = tr("import.path"),
-        controlSize = "sm",
-        onChange = function(value)
-          importForm.path = value
-        end,
-      }),
-      ui.input({
-        key = "import:name",
-        value = importForm.name,
-        placeholder = tr("import.name"),
-        controlSize = "sm",
-        onChange = function(value)
-          importForm.name = value
-        end,
-      }),
-      ui.select({
-        key = "import:slot",
-        options = labels,
-        selectedIndex = importForm.slot - 1,
-        controlSize = "sm",
-        onChange = function(value)
-          importForm.slot = (tonumber(value) or 0) + 1
-          render()
-        end,
-      }),
-      hint(tr("import.hint")),
-      ui.row({ gap = 6, justify = "end" }, {
-        ui.button({
-          text = tr("browse.cancel"),
-          variant = "ghost",
-          controlSize = "sm",
-          onClick = function()
-            importOpen = false
-            render()
-          end,
-        }),
-        ui.button({
-          text = tr("import.save"),
-          variant = "primary",
-          controlSize = "sm",
-          enabled = not busy,
-          onClick = importShader,
-        }),
-      }),
+-- The open GLSL import form, shown under the search row.
+local function importCard()
+  return card("import", {
+    ui.label({ text = tr("import.title"), fontWeight = "bold" }),
+    ui.input({
+      key = "import:path",
+      value = importForm.path,
+      placeholder = tr("import.path"),
+      controlSize = "sm",
+      onChange = function(value)
+        importForm.path = value
+      end,
     }),
-  }
+    ui.input({
+      key = "import:name",
+      value = importForm.name,
+      placeholder = tr("import.name"),
+      controlSize = "sm",
+      onChange = function(value)
+        importForm.name = value
+      end,
+    }),
+    ui.select({
+      key = "import:slot",
+      options = slotOptions(),
+      selectedIndex = importForm.slot - 1,
+      controlSize = "sm",
+      onChange = function(value)
+        importForm.slot = (tonumber(value) or 0) + 1
+        render()
+      end,
+    }),
+    hint(tr("import.hint")),
+    ui.row({ gap = 6, justify = "end" }, {
+      button(tr("browse.cancel"), function()
+        importOpen = false
+        render()
+      end, { variant = "ghost" }),
+      button(tr("import.save"), importShader, { variant = "primary", enabled = not busy }),
+    }),
+  })
 end
 
 local function browseTab()
@@ -631,33 +580,19 @@ local function browseTab()
         nodes(
           ui.label({ text = text, flexGrow = 1 }),
           target.app_id
-            and ui.button({
-              text = tr("apps.off"),
-              controlSize = "sm",
-              enabled = canApply(),
-              onClick = function()
-                picking, tab, query = nil, "slots", ""
-                commit(function(n)
-                  Selection.setApp(n, target.app_id, target.slot, nil)
-                end)
-              end,
-            }),
-          ui.button({
-            text = tr("browse.cancel"),
-            controlSize = "sm",
-            variant = "ghost",
-            onClick = function()
+            and button(tr("apps.off"), function()
               picking, tab, query = nil, "slots", ""
-              render()
-            end,
-          })
+              commit(function(n)
+                Selection.setApp(n, target.app_id, target.slot, nil)
+              end)
+            end, { enabled = canApply() }),
+          button(tr("browse.cancel"), function()
+            picking, tab, query = nil, "slots", ""
+            render()
+          end, { variant = "ghost" })
         )
       )
     )
-  end
-  local options = { tr("browse.all_slots") }
-  for _, slot in ipairs(Slots.list) do
-    table.insert(options, slotLabel(slot))
   end
   table.insert(
     out,
@@ -678,7 +613,7 @@ local function browseTab()
         not picking
           and ui.select({
             key = "slot-filter",
-            options = options,
+            options = slotOptions(tr("browse.all_slots")),
             selectedIndex = slotFilter and table.find(Slots.list, slotFilter) or 0,
             controlSize = "sm",
             width = 200,
@@ -687,10 +622,19 @@ local function browseTab()
               slotFilter, page = index > 0 and Slots.list[index] or nil, 1
               render()
             end,
-          })
+          }),
+        not picking
+          and not importOpen
+          and button(tr("import.open"), function()
+            importOpen = true
+            render()
+          end, { glyph = "plus", variant = "outline" })
       )
     )
   )
+  if importOpen and not picking then
+    table.insert(out, importCard())
+  end
   local effects = allEffects()
   if #effects == 0 then
     local key = catState == "error" and "banner.catalogue_failed" or "banner.loading"
@@ -709,31 +653,18 @@ local function browseTab()
       table.insert(
         out,
         ui.row({ gap = 8, align = "center", justify = "center" }, {
-          ui.button({
-            text = tr("browse.previous"),
-            controlSize = "sm",
-            enabled = page > 1,
-            onClick = function()
-              page -= 1
-              render()
-            end,
-          }),
+          button(tr("browse.previous"), function()
+            page -= 1
+            render()
+          end, { enabled = page > 1 }),
           ui.label({ text = tr("browse.page", { page = tostring(page), pages = tostring(pages) }) }),
-          ui.button({
-            text = tr("browse.next"),
-            controlSize = "sm",
-            enabled = page < pages,
-            onClick = function()
-              page += 1
-              render()
-            end,
-          }),
+          button(tr("browse.next"), function()
+            page += 1
+            render()
+          end, { enabled = page < pages }),
         })
       )
     end
-  end
-  for _, node in ipairs(browseFooter()) do
-    table.insert(out, node)
   end
   return out
 end
@@ -759,15 +690,9 @@ local function familiesTab()
         ui.label({ text = family.description or "", fontSize = 12, maxLines = 3 }),
         hint(table.concat(members, " · ")),
         ui.row({ justify = "end" }, {
-          ui.button({
-            text = tr("families.apply"),
-            variant = "primary",
-            controlSize = "sm",
-            enabled = canApply(),
-            onClick = function()
-              applyFamily(family)
-            end,
-          }),
+          button(tr("families.apply"), function()
+            applyFamily(family)
+          end, { variant = "primary", enabled = canApply() }),
         }),
       })
     )
@@ -788,42 +713,21 @@ local function banners()
     table.insert(out, banner(tr("banner.no_umbriel"), {}))
   end
   if setupState ~= "present" then
-    local actions = {}
-    if setupState == "insert" then
-      table.insert(
-        actions,
-        ui.button({
-          text = tr("setup.add"),
+    local actions = nodes(
+      setupState == "insert"
+        and button(tr("setup.add"), runSetup, {
           variant = "primary",
-          controlSize = "sm",
           enabled = not busy,
-          onClick = runSetup,
-        })
-      )
-    end
-    table.insert(
-      actions,
-      ui.button({
-        text = tr("setup.copy"),
-        controlSize = "sm",
-        onClick = function()
-          noctalia.copyToClipboard(Config.snippet)
-          say(tr("setup.copied"))
-          render()
-        end,
-      })
-    )
-    table.insert(
-      actions,
-      ui.button({
-        text = tr("setup.check"),
-        controlSize = "sm",
-        variant = "ghost",
-        onClick = function()
-          refreshSetup()
-          render()
-        end,
-      })
+        }),
+      button(tr("setup.copy"), function()
+        noctalia.copyToClipboard(Config.snippet, "text/plain")
+        say(tr("setup.copied"))
+        render()
+      end),
+      button(tr("setup.check"), function()
+        refreshSetup()
+        render()
+      end, { variant = "ghost" })
     )
     table.insert(
       out,
@@ -845,61 +749,41 @@ local function header()
       color = "primary",
       flexGrow = 1,
     }),
-    ui.button({
-      text = tr("header.undo"),
-      controlSize = "sm",
-      variant = "ghost",
-      enabled = canApply() and sel.previous ~= nil,
-      onClick = function()
-        local nxt = Selection.undo(sel)
-        if nxt then
-          commitSelection(nxt, tr("status.undone"))
+    button(tr("header.undo"), function()
+      local nxt = Selection.undo(sel)
+      if nxt then
+        commitSelection(nxt, tr("status.undone"))
+      end
+    end, { variant = "ghost", enabled = canApply() and sel.previous ~= nil }),
+    button(tr("header.clear_all"), function()
+      commit(Selection.clearAll, tr("status.cleared"))
+    end, { variant = "ghost", enabled = canApply() }),
+    button(nil, function()
+      for dest, state in pairs(previews) do
+        if state == "failed" then
+          previews[dest] = nil
         end
-      end,
-    }),
-    ui.button({
-      text = tr("header.clear_all"),
-      controlSize = "sm",
-      variant = "ghost",
-      enabled = canApply(),
-      onClick = function()
-        commit(Selection.clearAll, tr("status.cleared"))
-      end,
-    }),
-    ui.button({
+      end
+      fetchCatalogue()
+      render()
+    end, {
       glyph = "refresh",
       tooltip = tr("header.refresh"),
-      controlSize = "sm",
       variant = "ghost",
       enabled = not fetching,
-      onClick = function()
-        fetchCatalogue()
-        render()
-      end,
     }),
-    ui.button({
-      glyph = "x",
-      tooltip = tr("header.close"),
-      controlSize = "sm",
-      variant = "ghost",
-      onClick = function()
-        panel.close()
-      end,
-    }),
+    button(nil, function()
+      panel.close()
+    end, { glyph = "x", tooltip = tr("header.close"), variant = "ghost" }),
   })
 end
 
 local function tabs()
   local function tabButton(id)
-    return ui.button({
-      text = tr("tabs." .. id),
-      controlSize = "sm",
-      variant = tab == id and "primary" or "ghost",
-      onClick = function()
-        tab, picking, query = id, nil, ""
-        render()
-      end,
-    })
+    return button(tr("tabs." .. id), function()
+      tab, picking, query = id, nil, ""
+      render()
+    end, { variant = tab == id and "primary" or "ghost" })
   end
   return ui.row({ gap = 6 }, { tabButton("slots"), tabButton("browse"), tabButton("families") })
 end
@@ -914,9 +798,7 @@ render = function()
     body = slotsTab()
   end
   local children = { header(), tabs() }
-  for _, node in ipairs(banners()) do
-    table.insert(children, node)
-  end
+  append(children, banners())
   if message then
     table.insert(
       children,
@@ -928,8 +810,8 @@ render = function()
       })
     )
   end
-  table.insert(children, ui.scroll({ flexGrow = 1, gap = 8 }, body))
-  panel.render(ui.column({ gap = 10, padding = 16 }, children))
+  table.insert(children, ui.scroll({ key = "body:" .. tab, flexGrow = 1, gap = 8 }, body))
+  panel.render(ui.column({ flexGrow = 1, gap = 10, padding = 16 }, children))
 end
 
 function onOpen()
