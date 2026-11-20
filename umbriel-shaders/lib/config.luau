@@ -142,4 +142,126 @@ function M.render(sel)
   return table.concat(out, "\n") .. "\n"
 end
 
+-- `text` with our file added to [include.optional].files, or nil when the
+-- table is written in a form we do not edit (inline table, dotted keys).
+function M.addInclude(text)
+  local lines = text:split("\n")
+  local entry = M.string(M.fileName)
+  local section, header = nil, nil
+  for i, line in ipairs(lines) do
+    local code = line:match("^([^#]*)"):match("^%s*(.-)%s*$")
+    if code:match("^%[%[") then
+      section = "array"
+    elseif code:match("^%[") then
+      section = code:match("^%[%s*(.-)%s*%]$")
+      if section == "include.optional" then
+        header = i
+      end
+    elseif
+      (section == "include" and code:match("^optional%s*="))
+      or code:match("^include%.optional")
+    then
+      return nil
+    end
+  end
+  if not header then
+    local separator = text:sub(-1) == "\n" and "" or "\n"
+    return text .. separator .. "\n[include.optional]\nfiles = [" .. entry .. "]\n"
+  end
+  for i = header + 1, #lines do
+    local code = lines[i]:match("^([^#]*)")
+    if code:match("^%s*%[") then
+      break
+    end
+    local prefix = code:match("^(%s*files%s*=%s*%[)")
+    if prefix then
+      lines[i] = prefix .. entry .. ", " .. lines[i]:sub(#prefix + 1)
+      return table.concat(lines, "\n")
+    end
+  end
+  table.insert(lines, header + 1, "files = [" .. entry .. "]")
+  return table.concat(lines, "\n")
+end
+
+function M.includeState(text)
+  if type(text) ~= "string" then
+    return "manual"
+  end
+  if text:find(M.fileName, 1, true) then
+    return "present"
+  end
+  return M.addInclude(text) and "insert" or "manual"
+end
+
+local function diagnosticKey(d)
+  return (d.file or "") .. "|" .. tostring(d.message)
+end
+
+-- Diagnostics present in `after` but not `before`. Line numbers are ignored so
+-- that inserting a line into config.toml does not make old warnings look new.
+function M.introduced(before, after)
+  local known = {}
+  for _, d in ipairs(before.diagnostics) do
+    known[diagnosticKey(d)] = true
+  end
+  local out = {}
+  for _, d in ipairs(after.diagnostics) do
+    if not known[diagnosticKey(d)] then
+      local where = d.file and (d.file .. ":" .. tostring(d.line or "?") .. ": ") or ""
+      table.insert(out, where .. tostring(d.message))
+    end
+  end
+  return out
+end
+
+function M.validate(configPath, cb)
+  local argv = { "umbriel", "config", "validate", "-c", configPath, "--json" }
+  local started = noctalia.runAsync(argv, function(result)
+    local report = noctalia.json.decode(result.stdout or "")
+    if type(report) ~= "table" or type(report.diagnostics) ~= "table" then
+      local stderr = result.stderr or ""
+      cb(nil, stderr ~= "" and stderr or "umbriel config validate failed")
+      return
+    end
+    cb(report)
+  end)
+  if not started then
+    cb(nil, "could not run umbriel")
+  end
+end
+
+-- Insert our include into the user's config, keeping config.toml.bak, and put
+-- the original back if Umbriel reports anything new.
+function M.setup(paths, cb)
+  local text = noctalia.readFile(paths.config)
+  local updated = type(text) == "string" and M.addInclude(text) or nil
+  if not updated then
+    cb(false, "add the snippet to " .. paths.config .. " by hand")
+    return
+  end
+  M.validate(paths.config, function(before, err)
+    if not before then
+      cb(false, err)
+      return
+    end
+    local ok, writeErr = noctalia.writeFile(paths.config .. ".bak", text)
+    if ok then
+      ok, writeErr = noctalia.writeFile(paths.config, updated)
+    end
+    if not ok then
+      cb(false, writeErr)
+      return
+    end
+    M.validate(paths.config, function(after, err2)
+      local problems = after and M.introduced(before, after) or { err2 }
+      if #problems > 0 then
+        noctalia.writeFile(paths.config, text)
+        cb(false, table.concat(problems, "\n"))
+        return
+      end
+      cb(true)
+    end)
+  end)
+end
+
 return M
