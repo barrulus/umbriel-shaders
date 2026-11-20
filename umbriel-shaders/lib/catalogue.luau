@@ -16,7 +16,13 @@ local function safe(path)
 end
 
 local function allSafe(paths)
-  for _, path in ipairs(paths or {}) do
+  if paths == nil then
+    return true
+  end
+  if type(paths) ~= "table" then
+    return false
+  end
+  for _, path in ipairs(paths) do
     if not safe(path) then
       return false
     end
@@ -26,6 +32,41 @@ end
 
 local function byName(a, b)
   return a.name:lower() < b.name:lower()
+end
+
+-- Every key of a settings table must be a string, so later key handling cannot raise.
+local function stringKeys(settings)
+  for key in pairs(settings) do
+    if type(key) ~= "string" then
+      return false
+    end
+  end
+  return true
+end
+
+local function hasEntryFields(effect)
+  return type(effect) == "table"
+    and type(effect.id) == "string"
+    and type(effect.name) == "string"
+    and type(effect.preset) == "string"
+end
+
+local function isListable(effect)
+  local activation = effect.activation
+  return effect.role == "effect"
+    and type(activation) == "table"
+    and type(activation.include) == "table"
+    and type(activation.settings) == "table"
+    and stringKeys(activation.settings)
+    and (effect.dependencies == nil or type(effect.dependencies) == "table")
+end
+
+local function isFamily(family)
+  return type(family) == "table"
+    and type(family.name) == "string"
+    and type(family.activation) == "table"
+    and type(family.activation.settings) == "table"
+    and stringKeys(family.activation.settings)
 end
 
 function M.index(data)
@@ -38,21 +79,41 @@ function M.index(data)
   end
   local cat = { revision = revision, effects = {}, byId = {}, byPreset = {}, families = {} }
   for _, effect in ipairs(data.effects) do
-    local image = type(effect.preview) == "table" and effect.preview.image or nil
-    local usable = allSafe(effect.install_files)
-      and allSafe(effect.activation and effect.activation.include)
+    local preview = type(effect) == "table" and effect.preview
+    local image = type(preview) == "table" and preview.image or nil
+    local include = nil
+    if type(effect) == "table" and type(effect.activation) == "table" then
+      include = effect.activation.include
+    end
+    local usable = hasEntryFields(effect)
+      and allSafe(effect.install_files)
+      and allSafe(include)
       and (image == nil or safe(image))
     if usable then
       cat.byId[effect.id] = effect
       cat.byPreset[effect.preset] = effect
-      if effect.role == "effect" and effect.activation then
+      if isListable(effect) then
         table.insert(cat.effects, effect)
       end
     end
   end
+  -- An effect is only offered when every dependency it names is indexed.
+  local listed = {}
+  for _, effect in ipairs(cat.effects) do
+    local complete = true
+    for _, depId in ipairs(effect.dependencies or {}) do
+      if cat.byId[depId] == nil then
+        complete = false
+      end
+    end
+    if complete then
+      table.insert(listed, effect)
+    end
+  end
+  cat.effects = listed
   table.sort(cat.effects, byName)
-  for _, family in ipairs(data.families or {}) do
-    if family.activation then
+  for _, family in ipairs(type(data.families) == "table" and data.families or {}) do
+    if isFamily(family) then
       table.insert(cat.families, family)
     end
   end

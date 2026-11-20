@@ -61,4 +61,83 @@ local slots = Catalogue.familySlots(cat, cat.families[1])
 check.eq(slots["effects.border"].id, "border/glow", "family border member")
 check.eq(slots["animation.windows_in"].id, "animation/fade", "family animation member")
 check.eq(slots["animation.enabled"], nil, "non-selector keys ignored")
+
+-- Malformed network data is skipped, never raised.
+local hostile = {
+  schema_version = 1,
+  source = { revision = "abc123" },
+  effects = {
+    "not a table",
+    {
+      id = "x/noname",
+      preset = "noname",
+      role = "effect",
+      activation = { include = {}, settings = {} },
+    },
+    {
+      id = "x/nosettings",
+      name = "No settings",
+      preset = "nosettings",
+      role = "effect",
+      activation = { include = {} },
+    },
+    {
+      id = "x/noinclude",
+      name = "No include",
+      preset = "noinclude",
+      role = "effect",
+      activation = { settings = {} },
+    },
+    {
+      id = "x/badinstall",
+      name = "Bad install",
+      preset = "badinstall",
+      role = "effect",
+      install_files = "LICENSE",
+      activation = { include = {}, settings = {} },
+    },
+    {
+      id = "x/needs-evil",
+      name = "Needs evil",
+      preset = "needs-evil",
+      role = "effect",
+      dependencies = { "cursor/evil" },
+      activation = { include = {}, settings = { ["effects.window"] = "needs-evil" } },
+    },
+    {
+      id = "x/needs-nothing",
+      name = "Needs nothing",
+      preset = "needs-nothing",
+      role = "effect",
+      dependencies = { "nonexistent" },
+      activation = { include = {}, settings = {} },
+    },
+  },
+  families = {
+    "not a family",
+    { id = "noname", description = "x", activation = { include = {}, settings = {} } },
+  },
+}
+local hostileCat = Catalogue.index(hostile)
+check.truthy(hostileCat, "malformed entries do not reject the catalogue")
+check.eq(#hostileCat.effects, 0, "malformed and unresolvable effects are not listed")
+check.eq(#hostileCat.families, 0, "nameless and non-table families are dropped")
+
+-- An effect whose dependency is not indexed (unsafe fixture entry) is not listed.
+local dependsOnEvil = {
+  schema_version = 1,
+  source = data.source,
+  effects = { table.unpack(data.effects) },
+  families = {},
+}
+table.insert(dependsOnEvil.effects, {
+  id = "x/dep",
+  name = "Dep",
+  preset = "dep",
+  role = "effect",
+  dependencies = { "cursor/evil" },
+  install_files = {},
+  activation = { include = {}, settings = { ["effects.window"] = "dep" } },
+})
+check.eq(#Catalogue.index(dependsOnEvil).effects, 2, "unindexed dependency hides the effect")
 check.done("catalogue")
