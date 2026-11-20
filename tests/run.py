@@ -1,34 +1,36 @@
 #!/usr/bin/env python3
-"""Bundle the actual plugin modules and execute their host-fixture tests in Luau."""
-import argparse
-from pathlib import Path
+"""Run the Luau unit tests in tests/test_*.luau against umbriel-shaders/lib.
+
+Noctalia requires modules as require("./x.luau"); the stock luau CLI resolves
+require("./x"). The lib modules are copied to a temporary tree with the
+extension removed, next to a copy of the tests, so tests can require("../lib/x").
+"""
 import re
+import shutil
 import subprocess
+import sys
 import tempfile
-from translations import translation_fixture
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-PLUGIN = ROOT / 'umbriel-shaders'
+REQUIRE = re.compile(r'require\("(\.{1,2}/[^"]+)\.luau"\)')
 
-def bundle(entry):
-    loaders = []
-    for path in sorted(PLUGIN.rglob('*.luau')):
-        name = path.relative_to(PLUGIN).as_posix()
-        def dependency(match):
-            target = (path.parent / match.group(1)).resolve().relative_to(PLUGIN).as_posix()
-            return f'require({target!r})'
-        source = re.sub(r'require\("([^\"]+)"\)', dependency, path.read_text())
-        loaders.append(f'loaders[{name!r}] = function()\n{source}\nend\n')
-    return (translation_fixture() + 'local loaders, modules = {}, {}\nlocal require\n'
-            'require = function(name)\n if modules[name] == nil then modules[name] = assert(loaders[name], name)() end\n return modules[name]\nend\n'
-            + '\n'.join(loaders) + '\n' + entry)
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('runner', help='Luau CLI or tests/luau_runner.cpp executable')
-    args = parser.parse_args()
-    for test in sorted((ROOT / 'tests/luau').glob('*.luau')):
-        with tempfile.TemporaryDirectory(prefix='shaders-luau-test-') as temp:
-            script = Path(temp) / test.name
-            script.write_text(bundle((ROOT / 'tests/fixtures/host.luau').read_text() + '\n' + test.read_text()))
-            subprocess.run([args.runner, str(script)], check=True, timeout=120)
+def main() -> int:
+    luau = sys.argv[1] if len(sys.argv) > 1 else "luau"
+    with tempfile.TemporaryDirectory(prefix="umbriel-shaders-tests-") as temp:
+        tree = Path(temp)
+        (tree / "lib").mkdir()
+        for module in (ROOT / "umbriel-shaders" / "lib").glob("*.luau"):
+            (tree / "lib" / module.name).write_text(REQUIRE.sub(r'require("\1")', module.read_text()))
+        shutil.copytree(ROOT / "tests", tree / "tests", ignore=shutil.ignore_patterns("*.py", "__pycache__"))
+        failures = 0
+        for test in sorted((tree / "tests").glob("test_*.luau")):
+            failures += subprocess.run([luau, str(test)]).returncode != 0
+    if failures:
+        print(f"{failures} test file(s) failed")
+    return 1 if failures else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
