@@ -196,7 +196,7 @@ end
 
 local function card(key, children)
   return ui.column(
-    { key = key, gap = 6, padding = 10, radius = 8, fill = "surface_variant/0.5" },
+    { key = key, gap = 6, padding = 10, radius = 8, fill = "surface_container/0.5" },
     children
   )
 end
@@ -294,10 +294,10 @@ local function effectCard(effect)
   end
   local image = previewFor(effect)
   return ui.row(
-    { key = effect.id, gap = 12, padding = 10, radius = 8, fill = "surface_variant/0.5" },
+    { key = effect.id, gap = 12, padding = 10, radius = 8, fill = "surface_container/0.5" },
     {
       image and ui.image({ path = image, width = 144, height = 81, radius = 6, fit = "cover" })
-        or ui.box({ width = 144, height = 81, radius = 6, fill = "surface_variant" }),
+        or ui.box({ width = 144, height = 81, radius = 6, fill = "surface_container" }),
       ui.column({ gap = 4, flexGrow = 1 }, {
         ui.label({ text = effect.name, fontWeight = "bold" }),
         ui.label({
