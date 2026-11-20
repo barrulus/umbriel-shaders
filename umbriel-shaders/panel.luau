@@ -205,49 +205,235 @@ local function hint(text)
   return ui.label({ text = text, fontSize = 11, color = "on_surface_variant" })
 end
 
+local expanded = nil -- slot whose details are open
+local timingDraft = {} -- slot -> { duration = string, curve = string }
+local openApps = nil -- sorted app IDs of open windows, nil until read
+
+local function loadOpenApps()
+  noctalia.runAsync({ "umbriel", "windows", "--json" }, function(result)
+    local windows = noctalia.json.decode(result.stdout or "")
+    local seen, apps = {}, {}
+    for _, window in ipairs(type(windows) == "table" and windows or {}) do
+      local app = window.app_id
+      if type(app) == "string" and app ~= "" and not seen[app] then
+        seen[app] = true
+        table.insert(apps, app)
+      end
+    end
+    table.sort(apps)
+    openApps = apps
+    render()
+  end)
+end
+
+local function toggleDetails(slot)
+  expanded = expanded ~= slot and slot or nil
+  if expanded and Slots.appSlots[slot] then
+    openApps = nil
+    loadOpenApps()
+  end
+  render()
+end
+
+local function applyTiming(slot)
+  local draft = timingDraft[slot] or {}
+  local timing, err = Selection.parseTiming(draft.duration, draft.curve)
+  if not timing then
+    say(tr(err), true)
+    render()
+    return
+  end
+  commit(function(n)
+    n.timing[slot] = next(timing) and timing or nil
+  end, tr("status.timing_saved"))
+end
+
+local function timingNodes(slot, entry)
+  local draft = timingDraft[slot]
+  if not draft then
+    local saved = sel.timing[slot] or {}
+    draft = {
+      duration = saved.duration_ms and tostring(saved.duration_ms) or "",
+      curve = saved.curve or "",
+    }
+    timingDraft[slot] = draft
+  end
+  local ownDuration = entry.settings[slot .. ".duration_ms"]
+  local ownCurve = entry.settings[slot .. ".curve"]
+  return {
+    ui.row({ gap = 8, align = "center" }, {
+      ui.input({
+        key = slot .. ":duration",
+        value = draft.duration,
+        placeholder = ownDuration and tr("timing.duration_own", { value = tostring(ownDuration) })
+          or tr("timing.duration"),
+        controlSize = "sm",
+        width = 190,
+        onChange = function(value)
+          draft.duration = value
+        end,
+      }),
+      ui.input({
+        key = slot .. ":curve",
+        value = draft.curve,
+        placeholder = ownCurve and tr("timing.curve_own", { value = tostring(ownCurve) })
+          or tr("timing.curve"),
+        controlSize = "sm",
+        flexGrow = 1,
+        onChange = function(value)
+          draft.curve = value
+        end,
+      }),
+      ui.button({
+        text = tr("timing.apply"),
+        controlSize = "sm",
+        enabled = canApply(),
+        onClick = function()
+          applyTiming(slot)
+        end,
+      }),
+    }),
+    hint(tr("timing.hint")),
+  }
+end
+
+local function appNodes(slot)
+  local out = { ui.label({ text = tr("apps.title"), fontWeight = "bold", fontSize = 12 }) }
+  local assigned = {}
+  for _, rule in ipairs(sel.apps) do
+    if rule.slot == slot then
+      assigned[rule.app_id] = true
+      table.insert(
+        out,
+        ui.row({ key = slot .. ":" .. rule.app_id, gap = 8, align = "center" }, {
+          ui.label({ text = rule.app_id, flexGrow = 1 }),
+          ui.label({
+            text = rule.entry and rule.entry.name or tr("apps.off"),
+            color = "primary",
+            fontSize = 12,
+          }),
+          ui.button({
+            text = tr("slots.change"),
+            controlSize = "sm",
+            enabled = canApply(),
+            onClick = function()
+              pick(slot, rule.app_id)
+            end,
+          }),
+          ui.button({
+            text = tr("apps.remove"),
+            controlSize = "sm",
+            variant = "ghost",
+            enabled = canApply(),
+            onClick = function()
+              commit(function(n)
+                Selection.removeApp(n, rule.app_id, slot)
+              end)
+            end,
+          }),
+        })
+      )
+    end
+  end
+  if openApps == nil then
+    table.insert(out, hint(tr("apps.loading")))
+  else
+    local choices = {}
+    for _, app in ipairs(openApps) do
+      if not assigned[app] then
+        table.insert(choices, app)
+      end
+    end
+    if #choices > 0 then
+      local labels = { tr("apps.add") }
+      for _, app in ipairs(choices) do
+        table.insert(labels, app)
+      end
+      table.insert(
+        out,
+        ui.select({
+          key = slot .. ":add",
+          options = labels,
+          selectedIndex = 0,
+          controlSize = "sm",
+          enabled = canApply(),
+          onChange = function(value)
+            local index = tonumber(value) or 0
+            if index > 0 then
+              pick(slot, choices[index])
+            end
+          end,
+        })
+      )
+    end
+  end
+  table.insert(out, hint(tr("apps.hint")))
+  return out
+end
+
 local function slotsTab()
   local out = {}
   for _, slot in ipairs(Slots.list) do
     local entry = sel.slots[slot]
-    table.insert(
-      out,
-      card(slot, {
-        ui.row(
-          { gap = 8, align = "center" },
-          nodes(
-            ui.column({ gap = 2, flexGrow = 1 }, {
-              ui.label({ text = slotLabel(slot), fontWeight = "bold" }),
-              ui.label({
-                text = entry and entry.name or tr("slots.none"),
-                color = entry and "primary" or "on_surface_variant",
-                fontSize = 12,
-              }),
+    local hasDetails = Slots.appSlots[slot] ~= nil or (entry ~= nil and Slots.isAnimation(slot))
+    local children = {
+      ui.row(
+        { gap = 8, align = "center" },
+        nodes(
+          ui.column({ gap = 2, flexGrow = 1 }, {
+            ui.label({ text = slotLabel(slot), fontWeight = "bold" }),
+            ui.label({
+              text = entry and entry.name or tr("slots.none"),
+              color = entry and "primary" or "on_surface_variant",
+              fontSize = 12,
             }),
-            ui.button({
-              text = tr("slots.change"),
+          }),
+          ui.button({
+            text = tr("slots.change"),
+            controlSize = "sm",
+            enabled = canApply(),
+            onClick = function()
+              pick(slot, nil)
+            end,
+          }),
+          entry
+            and ui.button({
+              text = tr("slots.clear"),
               controlSize = "sm",
+              variant = "ghost",
               enabled = canApply(),
               onClick = function()
-                pick(slot, nil)
+                commit(function(n)
+                  n.slots[slot] = nil
+                  n.timing[slot] = nil
+                end)
               end,
             }),
-            entry
-              and ui.button({
-                text = tr("slots.clear"),
-                controlSize = "sm",
-                variant = "ghost",
-                enabled = canApply(),
-                onClick = function()
-                  commit(function(n)
-                    n.slots[slot] = nil
-                    n.timing[slot] = nil
-                  end)
-                end,
-              })
-          )
-        ),
-      })
-    )
+          hasDetails
+            and ui.button({
+              text = expanded == slot and tr("slots.hide") or tr("slots.details"),
+              controlSize = "sm",
+              variant = "ghost",
+              onClick = function()
+                toggleDetails(slot)
+              end,
+            })
+        )
+      ),
+    }
+    if expanded == slot then
+      if entry and Slots.isAnimation(slot) then
+        for _, node in ipairs(timingNodes(slot, entry)) do
+          table.insert(children, node)
+        end
+      end
+      if Slots.appSlots[slot] then
+        for _, node in ipairs(appNodes(slot)) do
+          table.insert(children, node)
+        end
+      end
+    end
+    table.insert(out, card(slot, children))
   end
   return out
 end
