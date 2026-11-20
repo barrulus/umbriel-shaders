@@ -24,6 +24,8 @@ local tab = "slots" -- slots | browse | families
 local query, slotFilter, page = "", nil, 1
 local picking = nil -- { slot = string, app_id = string? } while choosing a shader
 local previews = {} -- destination path -> "pending" | "ok" | "failed"
+local timingDraft = {} -- slot -> { duration = string, curve = string }, cleared after each commit
+local draftGeneration = 0 -- bumped after each commit so timing inputs reseed from the saved values
 
 local render
 
@@ -62,6 +64,8 @@ local function commitSelection(nxt, okText, onOk)
     busy = false
     if ok then
       sel = nxt
+      timingDraft = {}
+      draftGeneration += 1
       say(okText or tr("status.applied"))
       if onOk then
         onOk()
@@ -206,7 +210,6 @@ local function hint(text)
 end
 
 local expanded = nil -- slot whose details are open
-local timingDraft = {} -- slot -> { duration = string, curve = string }
 local openApps = nil -- sorted app IDs of open windows, nil until read
 
 local function loadOpenApps()
@@ -263,7 +266,7 @@ local function timingNodes(slot, entry)
   return {
     ui.row({ gap = 8, align = "center" }, {
       ui.input({
-        key = slot .. ":duration",
+        key = slot .. ":duration:" .. draftGeneration,
         value = draft.duration,
         placeholder = ownDuration and tr("timing.duration_own", { value = tostring(ownDuration) })
           or tr("timing.duration"),
@@ -274,7 +277,7 @@ local function timingNodes(slot, entry)
         end,
       }),
       ui.input({
-        key = slot .. ":curve",
+        key = slot .. ":curve:" .. draftGeneration,
         value = draft.curve,
         placeholder = ownCurve and tr("timing.curve_own", { value = tostring(ownCurve) })
           or tr("timing.curve"),
@@ -407,6 +410,9 @@ local function slotsTab()
                   n.slots[slot] = nil
                   n.timing[slot] = nil
                 end)
+                if expanded == slot and not Slots.appSlots[slot] then
+                  expanded = nil
+                end
               end,
             }),
           hasDetails
