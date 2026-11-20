@@ -505,9 +505,116 @@ local function effectCard(effect)
   )
 end
 
--- Extra nodes at the end of Browse (Task 9 adds the import form here).
+local importOpen = false
+local importForm = { path = "", name = "", slot = 1 }
+
+local function importShader()
+  if busy then
+    return
+  end
+  local taken = {}
+  for _, effect in ipairs(sel.imports) do
+    taken[effect.id] = true
+  end
+  local slot = Slots.list[importForm.slot]
+  local effect, err = Files.import(env.paths.shaders, importForm.path, importForm.name, slot, taken)
+  if not effect then
+    say(tr("import.failed", { error = tostring(err) }), true)
+    render()
+    return
+  end
+  local nxt = Selection.copy(sel)
+  table.insert(nxt.imports, effect)
+  local ok, saveErr = Selection.save(env.selectionPath, nxt)
+  if ok then
+    sel = nxt
+    importOpen = false
+    importForm = { path = "", name = "", slot = importForm.slot }
+    say(tr("status.imported", { name = effect.name }))
+  else
+    Files.removeImport(effect)
+    say(tr("import.failed", { error = tostring(saveErr) }), true)
+  end
+  render()
+end
+
+-- The GLSL import form at the end of Browse.
 local function browseFooter()
-  return {}
+  if picking then
+    return {}
+  end
+  if not importOpen then
+    return {
+      ui.row({ justify = "end" }, {
+        ui.button({
+          text = tr("import.open"),
+          glyph = "plus",
+          variant = "outline",
+          controlSize = "sm",
+          onClick = function()
+            importOpen = true
+            render()
+          end,
+        }),
+      }),
+    }
+  end
+  local labels = {}
+  for _, slot in ipairs(Slots.list) do
+    table.insert(labels, slotLabel(slot))
+  end
+  return {
+    card("import", {
+      ui.label({ text = tr("import.title"), fontWeight = "bold" }),
+      ui.input({
+        key = "import:path",
+        value = importForm.path,
+        placeholder = tr("import.path"),
+        controlSize = "sm",
+        onChange = function(value)
+          importForm.path = value
+        end,
+      }),
+      ui.input({
+        key = "import:name",
+        value = importForm.name,
+        placeholder = tr("import.name"),
+        controlSize = "sm",
+        onChange = function(value)
+          importForm.name = value
+        end,
+      }),
+      ui.select({
+        key = "import:slot",
+        options = labels,
+        selectedIndex = importForm.slot - 1,
+        controlSize = "sm",
+        onChange = function(value)
+          importForm.slot = (tonumber(value) or 0) + 1
+          render()
+        end,
+      }),
+      hint(tr("import.hint")),
+      ui.row({ gap = 6, justify = "end" }, {
+        ui.button({
+          text = tr("browse.cancel"),
+          variant = "ghost",
+          controlSize = "sm",
+          onClick = function()
+            importOpen = false
+            render()
+          end,
+        }),
+        ui.button({
+          text = tr("import.save"),
+          variant = "primary",
+          controlSize = "sm",
+          enabled = not busy,
+          onClick = importShader,
+        }),
+      }),
+    }),
+  }
 end
 
 local function browseTab()
