@@ -255,8 +255,19 @@ function M.setup(paths, cb)
     M.validate(paths.config, function(after, err2)
       local problems = after and M.introduced(before, after) or { err2 }
       if #problems > 0 then
-        noctalia.writeFile(paths.config, text)
-        cb(false, table.concat(problems, "\n"))
+        local restored, restoreErr = noctalia.writeFile(paths.config, text)
+        local message = table.concat(problems, "\n")
+        if not restored then
+          message = message
+            .. "\nrestoring "
+            .. paths.config
+            .. " failed: "
+            .. tostring(restoreErr)
+            .. "; the original is in "
+            .. paths.config
+            .. ".bak"
+        end
+        cb(false, message)
         return
       end
       cb(true)
