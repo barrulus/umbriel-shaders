@@ -1,10 +1,10 @@
 [[plugin]]
 id = "barrulus/umbriel-shaders"
 name = "Umbriel Shaders"
-version = "0.5.5"
+version = "0.7.0"
 plugin_api = 43
 author = "Barrulus"
 license = "MIT"
-description = "Browse community shaders, apply coordinated selections, undo and restore."
+description = "Browse community shaders and apply them to Umbriel effect and animation slots."
 dependencies = ["umbriel"]
 tags = ["umbriel", "theming", "panel", "utility"]
