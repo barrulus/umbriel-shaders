@@ -33,15 +33,22 @@ files = ["noctalia-shaders.toml"]
 
 The panel offers **Add for me**, which saves `config.toml.bak`, adds the file to your
 `[include.optional]` table (or creates the table), and keeps the change only if
-`umbriel config validate` reports nothing new. If you start Umbriel with `-c`, or your
-configuration is managed by Nix or home-manager, add the line yourself.
+`umbriel config validate` reports nothing new. **Add for me** overwrites any existing
+`config.toml.bak`. If your configuration is managed by Nix or home-manager, add the line
+yourself.
+
+A custom `umbriel -c` configuration is not supported by the setup check, which reads
+`~/.config/umbriel/config.toml`. The workaround is to include the generated file by absolute
+path (`~/.config/umbriel/noctalia-shaders.toml`) from that configuration. The panel will
+still show the setup banner; use **Copy** or ignore it.
 
 ## Usage
 
 - **Slots** lists every destination: cursor, border, window, screen and the animation
   events. **Change** opens Browse filtered to that slot; **Clear** removes the shader.
 - **Details** on an animation slot overrides its duration and curve. Leave a field empty
-  to use the shader's own value.
+  to use the shader's own value. Timing overrides stay with the slot when you change its
+  shader; clear them by emptying the fields and saving.
 - **Details** on Border and Window adds per-application rules: pick an open application,
   then a shader or **No effect**. Rules match the exact app ID and cover all its windows.
 - **Browse** searches the catalogue. Each card has one button per slot the shader supports.
@@ -58,6 +65,12 @@ back and the message is shown. Umbriel reloads the file by itself.
 Your own `config.toml` is applied after the generated file, so anything you set there —
 an `[effects]` selector, animation timing, a window rule — takes precedence. If a slot
 does not change, check your own configuration for the same key.
+
+## Upgrading from 0.6
+
+If you upgraded without pressing **Restore original**, run
+`umbriel config-replace "$HOME/.config/umbriel/config.toml"` (or restart Umbriel) so it
+stops watching the 0.6 wrapper file.
 
 ## Downloads and stored data
 

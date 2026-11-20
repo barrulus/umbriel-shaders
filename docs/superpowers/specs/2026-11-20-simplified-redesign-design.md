@@ -141,14 +141,9 @@ snippet to add to the existing table, with **Copy**. **Check again** re-reads.
 
 ## Rendering
 
-Deterministic order:
-
-1. `[include] files = [...]` — sorted, de-duplicated absolute paths.
-2. `[effects]` — slot selectors.
-3. `[animation]` — `enabled = true` if any animation slot is set.
-4. `[animation.<event>]` per animation slot, keys sorted, timing overrides applied.
-5. `[[window_rule]]` per app assignment: `match.app_id = "^<regex-escaped>$"`
-   and `border_effect` or `window_effect`.
+Deterministic: `[include]` first, then setting tables in alphabetical order, then
+`[[window_rule]]` entries (`match.app_id = "^<regex-escaped>$"` and `border_effect` or
+`window_effect`). A given effect id is included from one revision only.
 
 Strings are TOML basic strings with `\`, `"` and control characters escaped.
 Values are strings, integers, floats and booleans only.
@@ -199,3 +194,11 @@ budget: no service. Over budget: add the minimal decoding service described in
 
 All text files under `umbriel-shaders/` (everything except `thumbnail.webp`)
 total under ~1,800 lines, including `translations/en.json`; tests ~300 lines.
+
+## Recorded deviations
+
+- The timing curve is free text: spring curves are free-form, so it is not validated.
+- Slots lists all 13 slots.
+- The Browse page size is 8.
+- The status line is the message label under the tabs.
+- The import entry point is at the top of Browse.

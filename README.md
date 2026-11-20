@@ -19,4 +19,6 @@ noctalia msg plugins source add umbriel-shaders path "$HOME/dev/umbriel-shaders"
 ```
 
 Upgrading from 0.6 or earlier: press **Restore original** in the old version before
-updating. 0.7 no longer uses a wrapper configuration.
+updating. 0.7 no longer uses a wrapper configuration. If you upgraded without pressing
+**Restore original**, run `umbriel config-replace "$HOME/.config/umbriel/config.toml"` (or
+restart Umbriel) so it stops watching the 0.6 wrapper file.
