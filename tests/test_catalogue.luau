@@ -140,4 +140,45 @@ table.insert(dependsOnEvil.effects, {
   activation = { include = {}, settings = { ["effects.window"] = "dep" } },
 })
 check.eq(#Catalogue.index(dependsOnEvil).effects, 2, "unindexed dependency hides the effect")
+-- Settings that cannot become TOML, or a missing uses list, keep an effect unlisted.
+local function listedWith(change)
+  local effect = {
+    id = "x/probe",
+    name = "Probe",
+    preset = "probe",
+    role = "effect",
+    uses = { "effects.window" },
+    install_files = {},
+    activation = { include = {}, settings = { ["effects.window"] = "probe" } },
+  }
+  change(effect)
+  return #Catalogue.index({
+    schema_version = 1,
+    source = data.source,
+    effects = { effect },
+    families = {},
+  }).effects
+end
+check.eq(listedWith(function() end), 1, "a well-formed probe is listed")
+check.eq(
+  listedWith(function(e)
+    e.activation.settings["effects.x"] = { 1 }
+  end),
+  0,
+  "table-valued setting is not listed"
+)
+check.eq(
+  listedWith(function(e)
+    e.uses = "effects.window"
+  end),
+  0,
+  "non-table uses is not listed"
+)
+check.eq(
+  listedWith(function(e)
+    e.activation.settings["effects.bad key"] = "x"
+  end),
+  0,
+  "setting key with a space is not listed"
+)
 check.done("catalogue")

@@ -34,10 +34,15 @@ local function byName(a, b)
   return a.name:lower() < b.name:lower()
 end
 
--- Every key of a settings table must be a string, so later key handling cannot raise.
-local function stringKeys(settings)
-  for key in pairs(settings) do
-    if type(key) ~= "string" then
+-- Settings become TOML: keys must be bare-key-safe dotted paths and values scalars.
+local function validSettings(settings)
+  for key, value in pairs(settings) do
+    local t = type(value)
+    if
+      type(key) ~= "string"
+      or not key:match("^[%w_%-]+[%w_.%-]*$")
+      or (t ~= "string" and t ~= "number" and t ~= "boolean")
+    then
       return false
     end
   end
@@ -54,10 +59,11 @@ end
 local function isListable(effect)
   local activation = effect.activation
   return effect.role == "effect"
+    and type(effect.uses) == "table"
     and type(activation) == "table"
     and type(activation.include) == "table"
     and type(activation.settings) == "table"
-    and stringKeys(activation.settings)
+    and validSettings(activation.settings)
     and (effect.dependencies == nil or type(effect.dependencies) == "table")
 end
 
@@ -66,7 +72,7 @@ local function isFamily(family)
     and type(family.name) == "string"
     and type(family.activation) == "table"
     and type(family.activation.settings) == "table"
-    and stringKeys(family.activation.settings)
+    and validSettings(family.activation.settings)
 end
 
 function M.index(data)

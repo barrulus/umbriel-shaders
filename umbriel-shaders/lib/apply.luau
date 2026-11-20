@@ -28,39 +28,12 @@ function M.commit(env, nxt, cb)
       cb(false, noctalia.tr("error.download", { file = failed }))
       return
     end
-    Config.validate(paths.config, function(before, err)
-      if not before then
-        cb(false, err)
-        return
-      end
-      local previous = noctalia.readFile(paths.generated)
-      local ok, writeErr = noctalia.writeFile(paths.generated, Config.render(nxt))
-      if not ok then
-        cb(false, writeErr)
-        return
-      end
-      Config.validate(paths.config, function(after, err2)
-        local problems = after and Config.introduced(before, after) or { err2 }
-        if #problems > 0 then
-          local restored, restoreErr
-          if previous then
-            restored, restoreErr = noctalia.writeFile(paths.generated, previous)
-          else
-            restored, restoreErr = noctalia.removeFile(paths.generated)
-          end
-          local message = table.concat(problems, "\n")
-          if not restored then
-            message = message
-              .. "\nrestoring "
-              .. paths.generated
-              .. " failed: "
-              .. tostring(restoreErr)
-          end
-          cb(false, message)
-          return
-        end
+    Config.guardedWrite(paths.config, paths.generated, Config.render(nxt), function(ok, err)
+      if ok then
         cb(Selection.save(env.selectionPath, nxt))
-      end)
+      else
+        cb(false, err)
+      end
     end)
   end)
 end

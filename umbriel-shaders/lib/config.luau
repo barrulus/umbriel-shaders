@@ -80,9 +80,17 @@ function M.render(sel)
       companion[dep] = true
     end
   end
-  local includeSet = {}
+  -- One revision per effect id: two revisions of the same preset are an Umbriel error.
+  local newest = {}
   for _, entry in ipairs(entries) do
-    if not companion[entry.id] then
+    local best = newest[entry.id]
+    if not best or (entry.revision or "") > (best.revision or "") then
+      newest[entry.id] = entry
+    end
+  end
+  local includeSet = {}
+  for id, entry in pairs(newest) do
+    if not companion[id] then
       for _, path in ipairs(entry.include) do
         includeSet[path] = true
       end
@@ -230,6 +238,50 @@ function M.validate(configPath, cb)
   end
 end
 
+local function atomicWrite(path, text)
+  local temp = path .. ".tmp"
+  local ok, err = noctalia.writeFile(temp, text)
+  if ok then
+    ok, err = noctalia.renameFile(temp, path)
+  end
+  return ok, err
+end
+
+-- Write `newText` to `target` and keep it only if Umbriel, validating
+-- `configPath`, reports nothing new; otherwise put the old text back.
+function M.guardedWrite(configPath, target, newText, cb)
+  M.validate(configPath, function(before, err)
+    if not before then
+      cb(false, err)
+      return
+    end
+    local previous = noctalia.readFile(target)
+    local ok, writeErr = atomicWrite(target, newText)
+    if not ok then
+      cb(false, writeErr)
+      return
+    end
+    M.validate(configPath, function(after, err2)
+      local problems = after and M.introduced(before, after) or { err2 }
+      if #problems == 0 then
+        cb(true)
+        return
+      end
+      local restored, restoreErr
+      if previous then
+        restored, restoreErr = atomicWrite(target, previous)
+      else
+        restored, restoreErr = noctalia.removeFile(target)
+      end
+      local message = table.concat(problems, "\n")
+      if not restored then
+        message = message .. "\nrestoring " .. target .. " failed: " .. tostring(restoreErr)
+      end
+      cb(false, message)
+    end)
+  end)
+end
+
 -- Insert our include into the user's config, keeping config.toml.bak, and put
 -- the original back if Umbriel reports anything new.
 function M.setup(paths, cb)
@@ -239,39 +291,16 @@ function M.setup(paths, cb)
     cb(false, "add the snippet to " .. paths.config .. " by hand")
     return
   end
-  M.validate(paths.config, function(before, err)
-    if not before then
-      cb(false, err)
-      return
+  local ok, err = noctalia.writeFile(paths.config .. ".bak", text)
+  if not ok then
+    cb(false, err)
+    return
+  end
+  M.guardedWrite(paths.config, paths.config, updated, function(done, message)
+    if not done and message:find("restoring " .. paths.config .. " failed", 1, true) then
+      message = message .. "; the original is in " .. paths.config .. ".bak"
     end
-    local ok, writeErr = noctalia.writeFile(paths.config .. ".bak", text)
-    if ok then
-      ok, writeErr = noctalia.writeFile(paths.config, updated)
-    end
-    if not ok then
-      cb(false, writeErr)
-      return
-    end
-    M.validate(paths.config, function(after, err2)
-      local problems = after and M.introduced(before, after) or { err2 }
-      if #problems > 0 then
-        local restored, restoreErr = noctalia.writeFile(paths.config, text)
-        local message = table.concat(problems, "\n")
-        if not restored then
-          message = message
-            .. "\nrestoring "
-            .. paths.config
-            .. " failed: "
-            .. tostring(restoreErr)
-            .. "; the original is in "
-            .. paths.config
-            .. ".bak"
-        end
-        cb(false, message)
-        return
-      end
-      cb(true)
-    end)
+    cb(done, message)
   end)
 end
 

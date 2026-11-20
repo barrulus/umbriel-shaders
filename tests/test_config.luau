@@ -93,4 +93,25 @@ check.eq(
   expected,
   "companion include skipped, includes sorted, timing overrides applied, unset-slot timing ignored"
 )
+-- One effect id at two catalogue revisions includes only one revision.
+local function atRevision(revision)
+  return {
+    id = "border/glow",
+    name = "Glow",
+    preset = "glow",
+    revision = revision,
+    deps = {},
+    include = { "/s/" .. revision .. "/border/glow/effect.toml" },
+    settings = { ["effects.border"] = "glow" },
+  }
+end
+local twoRevisions = {
+  slots = { ["effects.border"] = atRevision("r1") },
+  apps = { { app_id = "mpv", slot = "effects.border", entry = atRevision("r2") } },
+  timing = {},
+  imports = {},
+}
+local rendered = Config.render(twoRevisions)
+check.eq(select(2, rendered:gsub("effect%.toml", "")), 1, "one include path per effect id")
+check.truthy(rendered:find("/s/r2/", 1, true), "the greatest revision is kept")
 check.done("config render")
