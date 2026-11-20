@@ -49,4 +49,18 @@ check.eq(bad, nil, "non-numeric duration rejected")
 check.eq(err, "error.duration", "error key")
 check.eq(Selection.parseTiming("12.5", ""), nil, "fractional duration rejected")
 check.eq(Selection.parseTiming("-1", ""), nil, "negative duration rejected")
+local imported = Selection.change(sel, function(n)
+  n.imports = { { id = "import/x" } }
+  n.slots["effects.cursor"] = { id = "import/x" }
+  n.slots["effects.screen"] = { id = "screen/v", preset = "v" }
+  n.apps = { { app_id = "a", slot = "effects.window", entry = { id = "import/x" } } }
+end)
+local removed = Selection.change(imported, function(n)
+  Selection.removeImport(n, "import/x")
+end)
+local restored = Selection.undo(removed)
+check.eq(restored.slots["effects.cursor"], nil, "undo does not restore a removed import slot")
+check.eq(restored.slots["effects.screen"].preset, "v", "undo restores a non-import slot")
+check.eq(#restored.apps, 0, "undo does not restore a rule using a removed import")
+check.eq(#restored.imports, 0, "undo keeps the import removed")
 check.done("selection")

@@ -57,6 +57,28 @@ function M.undo(sel)
     n.slots = M.copy(previous.slots or {})
     n.apps = M.copy(previous.apps or {})
     n.timing = M.copy(previous.timing or {})
+    -- Imports are not part of the snapshot, so drop references to imports
+    -- that were removed after it was taken.
+    local current = {}
+    for _, effect in ipairs(n.imports) do
+      current[effect.id] = true
+    end
+    local function dangling(entry)
+      return entry ~= nil
+        and type(entry.id) == "string"
+        and entry.id:sub(1, 7) == "import/"
+        and not current[entry.id]
+    end
+    for slot, entry in pairs(n.slots) do
+      if dangling(entry) then
+        n.slots[slot] = nil
+      end
+    end
+    for i = #n.apps, 1, -1 do
+      if dangling(n.apps[i].entry) then
+        table.remove(n.apps, i)
+      end
+    end
   end)
 end
 
