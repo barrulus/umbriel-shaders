@@ -466,10 +466,13 @@ end
 
 local function effectCard(effect)
   local buttons = {}
-  for _, slot in ipairs(picking and { picking.slot } or effect.uses) do
+  local slots = picking and { picking.slot } or effect.uses
+  for _, slot in ipairs(slots) do
+    local text = #slots == 1 and tr("browse.apply")
+      or tr("browse.apply_to", { slot = slotLabel(slot) })
     table.insert(
       buttons,
-      button(picking and tr("browse.apply") or slotLabel(slot), function()
+      button(text, function()
         applyEffect(effect, slot)
       end, { key = effect.id .. ":" .. slot, variant = "secondary", enabled = canApply() })
     )
@@ -482,6 +485,10 @@ local function effectCard(effect)
       end, { key = effect.id .. ":remove", variant = "ghost", enabled = canApply() })
     )
   end
+  local slotNames = {}
+  for _, slot in ipairs(effect.uses) do
+    table.insert(slotNames, slotLabel(slot))
+  end
   local image = previewFor(effect)
   return card(effect.id, {
     image and ui.image({ path = image, width = 144, height = 81, radius = 6, fit = "cover" })
@@ -489,8 +496,9 @@ local function effectCard(effect)
     ui.column({ gap = 4, flexGrow = 1 }, {
       ui.label({ text = effect.name, fontWeight = "bold" }),
       ui.label({
-        text = effect.imported and tr("browse.imported")
-          or tr("browse.by", { author = effect.author or "" }),
+        text = (effect.imported and tr("browse.imported") or tr("browse.by", {
+          author = effect.author or "",
+        })) .. " · " .. table.concat(slotNames, ", "),
         fontSize = 12,
         color = "on_surface_variant",
       }),
