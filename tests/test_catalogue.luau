@@ -62,86 +62,12 @@ check.eq(slots["effects.border"].id, "border/glow", "family border member")
 check.eq(slots["animation.windows_in"].id, "animation/fade", "family animation member")
 check.eq(slots["animation.enabled"], nil, "non-selector keys ignored")
 
--- Malformed network data is skipped, never raised.
-local hostile = {
-  schema_version = 1,
-  source = { revision = "abc123" },
-  effects = {
-    "not a table",
-    {
-      id = "x/noname",
-      preset = "noname",
-      role = "effect",
-      activation = { include = {}, settings = {} },
-    },
-    {
-      id = "x/nosettings",
-      name = "No settings",
-      preset = "nosettings",
-      role = "effect",
-      activation = { include = {} },
-    },
-    {
-      id = "x/noinclude",
-      name = "No include",
-      preset = "noinclude",
-      role = "effect",
-      activation = { settings = {} },
-    },
-    {
-      id = "x/badinstall",
-      name = "Bad install",
-      preset = "badinstall",
-      role = "effect",
-      install_files = "LICENSE",
-      activation = { include = {}, settings = {} },
-    },
-    {
-      id = "x/needs-evil",
-      name = "Needs evil",
-      preset = "needs-evil",
-      role = "effect",
-      dependencies = { "cursor/evil" },
-      activation = { include = {}, settings = { ["effects.window"] = "needs-evil" } },
-    },
-    {
-      id = "x/needs-nothing",
-      name = "Needs nothing",
-      preset = "needs-nothing",
-      role = "effect",
-      dependencies = { "nonexistent" },
-      activation = { include = {}, settings = {} },
-    },
-  },
-  families = {
-    "not a family",
-    { id = "noname", description = "x", activation = { include = {}, settings = {} } },
-  },
-}
-local hostileCat = Catalogue.index(hostile)
-check.truthy(hostileCat, "malformed entries do not reject the catalogue")
-check.eq(#hostileCat.effects, 0, "malformed and unresolvable effects are not listed")
-check.eq(#hostileCat.families, 0, "nameless and non-table families are dropped")
+local function catalogueWith(effects, families)
+  return { schema_version = 1, source = data.source, effects = effects, families = families or {} }
+end
 
--- An effect whose dependency is not indexed (unsafe fixture entry) is not listed.
-local dependsOnEvil = {
-  schema_version = 1,
-  source = data.source,
-  effects = { table.unpack(data.effects) },
-  families = {},
-}
-table.insert(dependsOnEvil.effects, {
-  id = "x/dep",
-  name = "Dep",
-  preset = "dep",
-  role = "effect",
-  dependencies = { "cursor/evil" },
-  install_files = {},
-  activation = { include = {}, settings = { ["effects.window"] = "dep" } },
-})
-check.eq(#Catalogue.index(dependsOnEvil).effects, 2, "unindexed dependency hides the effect")
--- Settings that cannot become TOML, or a missing uses list, keep an effect unlisted.
-local function listedWith(change)
+-- A well-formed listable effect, adjusted by `change`.
+local function probe(change)
   local effect = {
     id = "x/probe",
     name = "Probe",
@@ -151,34 +77,91 @@ local function listedWith(change)
     install_files = {},
     activation = { include = {}, settings = { ["effects.window"] = "probe" } },
   }
-  change(effect)
-  return #Catalogue.index({
-    schema_version = 1,
-    source = data.source,
-    effects = { effect },
-    families = {},
-  }).effects
+  if change then
+    change(effect)
+  end
+  return effect
 end
-check.eq(listedWith(function() end), 1, "a well-formed probe is listed")
-check.eq(
-  listedWith(function(e)
-    e.activation.settings["effects.x"] = { 1 }
-  end),
-  0,
-  "table-valued setting is not listed"
+
+local function listed(change)
+  return #Catalogue.index(catalogueWith({ probe(change) })).effects
+end
+
+check.eq(listed(), 1, "a well-formed probe is listed")
+-- Malformed network data is skipped, never raised.
+for _, case in
+  {
+    {
+      "missing name",
+      function(e)
+        e.name = nil
+      end,
+    },
+    {
+      "missing settings",
+      function(e)
+        e.activation.settings = nil
+      end,
+    },
+    {
+      "missing include",
+      function(e)
+        e.activation.include = nil
+      end,
+    },
+    {
+      "install_files not a list",
+      function(e)
+        e.install_files = "LICENSE"
+      end,
+    },
+    {
+      "unknown dependency",
+      function(e)
+        e.dependencies = { "nonexistent" }
+      end,
+    },
+    {
+      "table-valued setting",
+      function(e)
+        e.activation.settings["effects.x"] = { 1 }
+      end,
+    },
+    {
+      "non-table uses",
+      function(e)
+        e.uses = "effects.window"
+      end,
+    },
+    {
+      "setting key with a space",
+      function(e)
+        e.activation.settings["effects.bad key"] = "x"
+      end,
+    },
+  }
+do
+  check.eq(listed(case[2]), 0, case[1] .. " is not listed")
+end
+
+local withEvilDep = table.clone(data.effects)
+table.insert(
+  withEvilDep,
+  probe(function(e)
+    e.dependencies = { "cursor/evil" }
+  end)
 )
 check.eq(
-  listedWith(function(e)
-    e.uses = "effects.window"
-  end),
-  0,
-  "non-table uses is not listed"
+  #Catalogue.index(catalogueWith(withEvilDep)).effects,
+  2,
+  "unsafe dependency hides the effect"
 )
-check.eq(
-  listedWith(function(e)
-    e.activation.settings["effects.bad key"] = "x"
-  end),
-  0,
-  "setting key with a space is not listed"
-)
+
+local junk = Catalogue.index(catalogueWith({ "not a table" }, {
+  "not a family",
+  { id = "noname", activation = { include = {}, settings = {} } },
+}))
+check.truthy(junk, "malformed entries do not reject the catalogue")
+check.eq(#junk.effects, 0, "non-table entries are skipped")
+check.eq(#junk.families, 0, "nameless and non-table families are dropped")
 check.done("catalogue")

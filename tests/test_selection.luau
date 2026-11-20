@@ -30,16 +30,6 @@ end)
 check.eq(#e.apps, 1, "rule removed")
 check.eq(e.apps[1].slot, "effects.border", "other rule kept")
 
-local f = Selection.change(sel, function(n)
-  n.imports = { { id = "import/x" } }
-  n.slots["effects.cursor"] = { id = "import/x" }
-  n.apps = { { app_id = "a", slot = "effects.window", entry = { id = "import/x" } } }
-  Selection.removeImport(n, "import/x")
-end)
-check.eq(#f.imports, 0, "import removed")
-check.eq(f.slots["effects.cursor"], nil, "slot using the import cleared")
-check.eq(#f.apps, 0, "rule using the import removed")
-
 local t = Selection.parseTiming(" 450 ", " linear ")
 check.eq(t.duration_ms, 450, "duration parsed")
 check.eq(t.curve, "linear", "curve trimmed")
@@ -49,15 +39,20 @@ check.eq(bad, nil, "non-numeric duration rejected")
 check.eq(err, "error.duration", "error key")
 check.eq(Selection.parseTiming("12.5", ""), nil, "fractional duration rejected")
 check.eq(Selection.parseTiming("-1", ""), nil, "negative duration rejected")
-local imported = Selection.change(sel, function(n)
+-- An import used by a slot and an app rule, next to an ordinary slot.
+local function withImport(n)
   n.imports = { { id = "import/x" } }
   n.slots["effects.cursor"] = { id = "import/x" }
   n.slots["effects.screen"] = { id = "screen/v", preset = "v" }
   n.apps = { { app_id = "a", slot = "effects.window", entry = { id = "import/x" } } }
-end)
-local removed = Selection.change(imported, function(n)
+end
+local removed = Selection.change(Selection.change(sel, withImport), function(n)
   Selection.removeImport(n, "import/x")
 end)
+check.eq(#removed.imports, 0, "import removed")
+check.eq(removed.slots["effects.cursor"], nil, "slot using the import cleared")
+check.eq(#removed.apps, 0, "rule using the import removed")
+check.eq(removed.slots["effects.screen"].preset, "v", "other slots kept")
 local restored = Selection.undo(removed)
 check.eq(restored.slots["effects.cursor"], nil, "undo does not restore a removed import slot")
 check.eq(restored.slots["effects.screen"].preset, "v", "undo restores a non-import slot")
